@@ -14,11 +14,15 @@ local function inject_script_trigger(prototype)
             if not deliveries[1] then deliveries = {deliveries} end
             
             for _, delivery in pairs(deliveries) do
-                -- Append a script trigger effect to the delivery
+                -- Append a script trigger effect to the delivery. The
+                -- weapon's own prototype name is baked into the effect_id
+                -- (rather than sent as separate data, which script triggers
+                -- don't support) so control.lua can tell WHICH projectile
+                -- or stream hit, not just that something did.
                 delivery.target_effects = delivery.target_effects or {}
                 table.insert(delivery.target_effects, {
                     type = "script",
-                    effect_id = "replay_combat_trigger"
+                    effect_id = "replay_combat_trigger:" .. prototype.name
                 })
             end
         end

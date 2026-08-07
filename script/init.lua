@@ -6,11 +6,12 @@ local Init = {}
 
 function Init.setup()
     Exporter.init()
-    CombatZones.init()
-    
-    -- Initialize storage for new tracking systems
-    storage.player_inventories = storage.player_inventories or {}
+
+    storage.inventory_cache = storage.inventory_cache or {}
     storage.unit_groups = storage.unit_groups or {}
+    storage.stats = storage.stats or {deaths = {}, kills = {}}
+
+    CombatZones.init()
 end
 
 return Init
