@@ -64,7 +64,6 @@ function Tracker.on_entity_died(event)
     end
 
     local scoreable = is_scoreable_kind(entity.type) and entity.force.name ~= "enemy"
-    local was_in_zone = CombatZones.is_zone_active(entity.surface, entity.position)
 
     -- Deaths always try to open/extend a combat zone (gated internally on
     -- player proximity), same as before. What's new is that we only bother
@@ -72,8 +71,7 @@ function Tracker.on_entity_died(event)
     -- were already recording, or it's scoreboard-worthy, or the user asked
     -- for everything via full recording mode. Otherwise this is exactly
     -- the "entities never near a biter" case the design doc says to skip.
-    CombatZones.trigger_combat_at(entity.surface, entity.position)
-    local now_in_zone = CombatZones.is_zone_active(entity.surface, entity.position)
+    local in_zone = CombatZones.notify_and_check(entity.surface, entity.position)
 
     local kind, size
     if entity.force.name == "enemy" then
@@ -91,7 +89,7 @@ function Tracker.on_entity_died(event)
         storage.inventory_cache["vehicle_" .. entity.unit_number] = nil
     end
 
-    if not (was_in_zone or now_in_zone or scoreable or Config.full_recording_mode()) then
+    if not (in_zone or scoreable or Config.full_recording_mode()) then
         return
     end
 
@@ -137,11 +135,8 @@ function Tracker.on_script_trigger_effect(event)
     local position = event.target_position or (target_entity and target_entity.valid and target_entity.position)
     if not position then return end
 
-    local was_in_zone = CombatZones.is_zone_active(surface, position)
-    CombatZones.trigger_combat_at(surface, position)
-    local now_in_zone = CombatZones.is_zone_active(surface, position)
-
-    if not (was_in_zone or now_in_zone or Config.full_recording_mode()) then return end
+    local in_zone = CombatZones.notify_and_check(surface, position)
+    if not (in_zone or Config.full_recording_mode()) then return end
 
     local source_entity = event.source_entity
     Exporter.log_event(game.tick, "projectile_impact", {
@@ -172,11 +167,8 @@ function Tracker.on_entity_damaged(event)
     if not entity or not entity.valid then return end
     if not DAMAGE_TRACKED_TYPES[entity.type] then return end
 
-    local was_in_zone = CombatZones.is_zone_active(entity.surface, entity.position)
-    CombatZones.trigger_combat_at(entity.surface, entity.position)
-    local now_in_zone = CombatZones.is_zone_active(entity.surface, entity.position)
-
-    if not (was_in_zone or now_in_zone or Config.full_recording_mode()) then return end
+    local in_zone = CombatZones.notify_and_check(entity.surface, entity.position)
+    if not (in_zone or Config.full_recording_mode()) then return end
 
     Exporter.log_event(game.tick, "damage_event", {
         target = entity.name,
@@ -259,11 +251,10 @@ function Tracker.tick()
     local mobile_data = {}
 
     for _, zone in pairs(storage.active_zones) do
-        local top_left = {x = zone.chunk_x * 32, y = zone.chunk_y * 32}
-        local bottom_right = {x = top_left.x + 32, y = top_left.y + 32}
+        local area = CombatZones.chunk_area(zone.chunk_x, zone.chunk_y)
 
         local entities = zone.surface.find_entities_filtered{
-            area = {top_left, bottom_right},
+            area = area,
             type = {"unit", "character", "car", "spider-vehicle", "locomotive",
                     "combat-robot", "construction-robot", "logistic-robot"}
         }
@@ -290,7 +281,7 @@ function Tracker.tick()
             end
         end
 
-        local belt_entities = zone.surface.find_entities_filtered{area = {top_left, bottom_right}, type = {"transport-belt", "underground-belt", "splitter"}}
+        local belt_entities = zone.surface.find_entities_filtered{area = area, type = {"transport-belt", "underground-belt", "splitter"}}
         log_belt_contents(belt_entities)
     end
 

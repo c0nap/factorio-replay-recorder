@@ -36,7 +36,9 @@ local function chunk_of(position)
     return math.floor(position.x / 32), math.floor(position.y / 32)
 end
 
-local function chunk_area(chunk_x, chunk_y)
+-- A chunk is always 32x32 tiles - exposed so other modules that need the
+-- area of an active zone (Tracker.tick) don't have to duplicate this math.
+function CombatZones.chunk_area(chunk_x, chunk_y)
     local top_left = {x = chunk_x * 32, y = chunk_y * 32}
     return {top_left, {x = top_left.x + 32, y = top_left.y + 32}}
 end
@@ -78,6 +80,17 @@ function CombatZones.is_zone_active(surface, position)
     return storage.active_zones[chunk_id(surface, cx, cy)] ~= nil
 end
 
+-- Convenience for event handlers: tries to open/extend a zone at `position`
+-- and reports whether it's worth logging this event at all, i.e. the
+-- position was already being recorded, or this event is what just opened
+-- the zone. Combines what would otherwise be three near-identical lines
+-- (check before, trigger, check after) at every call site.
+function CombatZones.notify_and_check(surface, position)
+    local was_active = CombatZones.is_zone_active(surface, position)
+    CombatZones.trigger_combat_at(surface, position)
+    return was_active or CombatZones.is_zone_active(surface, position)
+end
+
 -- Groups spawners that were captured in the same snapshot into rough nest
 -- "bases" by simple single-linkage proximity. This only clusters spawners
 -- we've actually recorded (i.e. ones near a fight a player took part in) -
@@ -114,7 +127,7 @@ local function cluster_spawners(spawners)
 end
 
 local function dump_static_chunk_data(surface, chunk_x, chunk_y)
-    local area = chunk_area(chunk_x, chunk_y)
+    local area = CombatZones.chunk_area(chunk_x, chunk_y)
 
     -- 1. Tiles (water, landfill, concrete, etc). This is the ground-truth
     -- pathing layer: whether biters have a clear route to the player is a

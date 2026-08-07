@@ -1,10 +1,17 @@
 -- script/exporter.lua
+-- The only module that touches disk. Everything else in the mod calls
+-- Exporter.log_event() to queue a line of output; this module batches
+-- those lines in storage.replay_buffer (so it survives a save/reload) and
+-- writes them out to script-output/replay.json as newline-delimited JSON
+-- (JSONL) whenever Exporter.flush() is called - see control.lua's on_tick
+-- handler for the flush schedule.
 local Exporter = {}
 
+-- Starts a fresh replay.json for a new game. Only call this for a true
+-- on_init - see Init.on_init in script/init.lua for why.
 function Exporter.init()
     storage.replay_buffer = storage.replay_buffer or {}
-    -- Clear previous run file
-    helpers.write_file("replay.json", "", false) 
+    helpers.write_file("replay.json", "", false)
 end
 
 function Exporter.log_event(tick, event_type, payload)
