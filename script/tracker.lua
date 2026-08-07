@@ -203,6 +203,28 @@ local function vehicle_inventory_contents(entity)
     return contents
 end
 
+-- Ties a biter/spitter back to the attack/expansion party it belongs to,
+-- so a viewer can render the group as a single parented object.
+--
+-- `unit_group` is only meant to be a valid key on "unit"-type entities
+-- (biters/spitters) - reading it on a character/car/robot/etc. throws
+-- "LuaEntity doesn't contain key unit_group" instead of returning nil.
+-- A `type == "unit"` guard alone turned out not to be reliable either:
+-- it still throws the same error for *some* unit-type entities depending
+-- on internal engine state (observed in practice; not something this mod
+-- can predict from the outside - e.g. units are known to not expose their
+-- group around on_entity_died). Rather than chase the exact rule, this is
+-- wrapped in pcall so any entity/state combination that doesn't support
+-- the key is treated as "not in a group" instead of crashing the mod.
+local function unit_group_id(ent)
+    if ent.type ~= "unit" then return nil end
+
+    local ok, group = pcall(function() return ent.unit_group end)
+    if not ok or not group or not group.valid then return nil end
+
+    return group.group_number
+end
+
 local BELT_TYPES = {["transport-belt"] = true, ["underground-belt"] = true, ["splitter"] = true}
 
 local function contents_equal(a, b)
@@ -268,15 +290,7 @@ function Tracker.tick()
                     force = ent.force.name,
                     position = ent.position,
                     orientation = ent.orientation,
-                    -- Ties biters/spitters back to the attack/expansion
-                    -- party they belong to, so a viewer can render the
-                    -- group as a single parented object. `unit_group` is
-                    -- only a valid key on "unit"-type entities (biters,
-                    -- spitters) - reading it on a character/car/robot/etc.
-                    -- throws "LuaEntity doesn't contain key unit_group"
-                    -- instead of returning nil, so it must be type-guarded.
-                    group_id = (ent.type == "unit" and ent.unit_group and ent.unit_group.valid)
-                        and ent.unit_group.group_number or nil,
+                    group_id = unit_group_id(ent),
                 }
                 table.insert(mobile_data, record)
 
