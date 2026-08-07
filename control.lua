@@ -6,8 +6,8 @@ local TrackerEvents = require("script.tracker_events")
 local Init = require("script.init")
 local Config = require("script.config")
 
-script.on_init(Init.setup)
-script.on_configuration_changed(Init.setup)
+script.on_init(Init.on_init)
+script.on_configuration_changed(Init.on_configuration_changed)
 
 -- Combat & Death Hooks
 script.on_event(defines.events.on_entity_died, Tracker.on_entity_died)
@@ -33,8 +33,16 @@ script.on_event(defines.events.on_chunk_generated, function(event)
 end)
 
 script.on_event(defines.events.on_runtime_mod_setting_changed, function(event)
-    if event.setting == "rrec-full-recording-mode" and Config.full_recording_mode() then
+    if event.setting ~= "rrec-full-recording-mode" then return end
+
+    if Config.full_recording_mode() then
         CombatZones.activate_all_existing_chunks()
+    else
+        -- Switching back to cropped mode: zones full recording opened stay
+        -- open forever otherwise, since they were marked permanent instead
+        -- of given a timeout. Give them a normal timeout so they wind down
+        -- like any other zone instead of recording everything forever.
+        CombatZones.expire_permanent_zones()
     end
 end)
 

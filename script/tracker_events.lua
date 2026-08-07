@@ -81,11 +81,10 @@ function TrackerEvents.on_unit_group_created(event)
     local group = event.group
     if not group or not group.valid then return end
 
-    storage.unit_groups[group.group_number] = {
-        force = group.force.name,
-        state = group.state
-    }
-
+    -- Group membership itself is looked up live from each unit's own
+    -- unit_group field when it's recorded (see Tracker.tick), so nothing
+    -- needs to be cached here - this is purely a one-shot "a group formed"
+    -- event.
     Exporter.log_event(game.tick, "unit_group_created", {
         group_id = group.group_number,
         force = group.force.name,

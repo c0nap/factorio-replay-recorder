@@ -46,7 +46,14 @@ local function entity_is_player_controlled(entity)
         return entity.player ~= nil
     end
     if entity.type == "car" or entity.type == "spider-vehicle" then
-        return entity.get_driver() ~= nil or entity.get_passenger() ~= nil
+        if entity.get_driver() ~= nil or entity.get_passenger() ~= nil then
+            return true
+        end
+        -- A spidertron with autopilot engaged is still "the player" even
+        -- with nobody sitting in it - Space Age lets players walk away
+        -- from a spider they've sent to fight on its own. Without this an
+        -- unmanned spidertron's entire battle would go unrecorded.
+        return entity.type == "spider-vehicle" and entity.autopilot_destination ~= nil
     end
     return false
 end
@@ -132,16 +139,25 @@ local function dump_static_chunk_data(surface, chunk_x, chunk_y)
     for _, entity in ipairs(statics) do
         local etype = entity.type
         if not Classify.MOBILE_TYPES[etype] and not Classify.IGNORED_TYPES[etype] then
-            local record = {
-                name = entity.name,
-                type = etype,
-                force = entity.force and entity.force.name or nil,
-                position = entity.position,
-                is_defense = Classify.DEFENSE_TYPES[etype] or nil,
-            }
-            table.insert(static_data, record)
-            if etype == "unit-spawner" then
-                table.insert(spawners, record)
+            -- Scanning every entity type on the map (rather than a fixed
+            -- allow-list) means we will eventually run into some exotic
+            -- vanilla or modded entity whose fields don't behave the way
+            -- we expect. pcall keeps one oddball entity from throwing an
+            -- error that would abort the whole chunk snapshot.
+            local ok, record = pcall(function()
+                return {
+                    name = entity.name,
+                    type = etype,
+                    force = entity.force and entity.force.name or nil,
+                    position = entity.position,
+                    is_defense = Classify.DEFENSE_TYPES[etype] or nil,
+                }
+            end)
+            if ok then
+                table.insert(static_data, record)
+                if etype == "unit-spawner" then
+                    table.insert(spawners, record)
+                end
             end
         end
     end
@@ -156,7 +172,7 @@ local function dump_static_chunk_data(surface, chunk_x, chunk_y)
     })
 end
 
-local function activate_zone(surface, chunk_x, chunk_y, expires_at)
+local function activate_zone(surface, chunk_x, chunk_y, permanent)
     local id = chunk_id(surface, chunk_x, chunk_y)
 
     -- Only dump the (potentially large) static snapshot the first time a
@@ -172,7 +188,15 @@ local function activate_zone(surface, chunk_x, chunk_y, expires_at)
         surface = surface,
         chunk_x = chunk_x,
         chunk_y = chunk_y,
-        expires_at = expires_at
+        -- `permanent` zones (full recording mode) never expire on their
+        -- own; everything else times out `zone_timeout_ticks` after the
+        -- last thing that happened in it. Using a flag instead of an
+        -- infinite expires_at keeps the stored value a normal finite
+        -- number (the save format has no business holding onto inf/NaN)
+        -- and makes the "never expires" case explicit rather than
+        -- implicit in a magic number.
+        permanent = permanent or nil,
+        expires_at = permanent and nil or (game.tick + Config.zone_timeout_ticks())
     }
 end
 
@@ -188,13 +212,13 @@ function CombatZones.trigger_combat_at(surface, position)
     end
 
     local cx, cy = chunk_of(position)
-    activate_zone(surface, cx, cy, game.tick + Config.zone_timeout_ticks())
+    activate_zone(surface, cx, cy, false)
 end
 
 -- Marks a single chunk as active forever (used by full recording mode,
 -- where cropping is disabled entirely and every generated chunk records).
 function CombatZones.activate_full_recording_chunk(surface, chunk_x, chunk_y)
-    activate_zone(surface, chunk_x, chunk_y, math.huge)
+    activate_zone(surface, chunk_x, chunk_y, true)
 end
 
 function CombatZones.activate_all_existing_chunks()
@@ -205,11 +229,25 @@ function CombatZones.activate_all_existing_chunks()
     end
 end
 
+-- Called when full recording mode is switched back off. Zones it opened
+-- are marked `permanent` and have no expires_at, so without this they
+-- would keep recording forever even after the user turned the crazy-file-
+-- size mode back off. Give each one a normal timeout instead so it winds
+-- down like any other zone.
+function CombatZones.expire_permanent_zones()
+    for _, zone in pairs(storage.active_zones) do
+        if zone.permanent then
+            zone.permanent = nil
+            zone.expires_at = game.tick + Config.zone_timeout_ticks()
+        end
+    end
+end
+
 function CombatZones.tick()
     if Config.full_recording_mode() then return end
 
     for id, zone in pairs(storage.active_zones) do
-        if game.tick >= zone.expires_at then
+        if not zone.permanent and zone.expires_at and game.tick >= zone.expires_at then
             storage.active_zones[id] = nil
             Exporter.log_event(game.tick, "zone_expired", {chunk_id = id})
         end

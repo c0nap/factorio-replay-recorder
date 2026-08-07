@@ -84,6 +84,13 @@ function Tracker.on_entity_died(event)
         record_score_event(entity, killer_data)
     end
 
+    if entity.type == "car" or entity.type == "spider-vehicle" then
+        -- Otherwise every vehicle that's ever fought near a player leaves
+        -- a permanent entry behind, growing the save forever over a long
+        -- campaign even though the vehicle itself is gone for good.
+        storage.inventory_cache["vehicle_" .. entity.unit_number] = nil
+    end
+
     if not (was_in_zone or now_in_zone or scoreable or Config.full_recording_mode()) then
         return
     end
@@ -206,16 +213,35 @@ end
 
 local BELT_TYPES = {["transport-belt"] = true, ["underground-belt"] = true, ["splitter"] = true}
 
+local function contents_equal(a, b)
+    a, b = a or {}, b or {}
+    for item, count in pairs(a) do
+        if b[item] ~= count then return false end
+    end
+    for item, count in pairs(b) do
+        if a[item] ~= count then return false end
+    end
+    return true
+end
+
+-- Belts are extremely common near any base, so if we logged every belt's
+-- full contents on every tick a fight was active, belt spam alone could
+-- dwarf the rest of the replay. Instead, cache each line's last-seen
+-- contents and only write out lines that actually changed since - the
+-- same "diff, don't dump" approach used for inventories.
 local function log_belt_contents(entities)
+    storage.belt_line_cache = storage.belt_line_cache or {}
     local belt_data = {}
+
     for _, ent in ipairs(entities) do
         if BELT_TYPES[ent.type] then
             local lines = {}
             for i = 1, ent.get_max_transport_line_index() do
-                local line = ent.get_transport_line(i)
-                local contents = line.get_contents()
-                if next(contents) then
+                local cache_key = ent.unit_number .. "_" .. i
+                local contents = ent.get_transport_line(i).get_contents()
+                if not contents_equal(storage.belt_line_cache[cache_key], contents) then
                     table.insert(lines, {line = i, contents = contents})
+                    storage.belt_line_cache[cache_key] = contents
                 end
             end
             if #lines > 0 then
@@ -223,6 +249,7 @@ local function log_belt_contents(entities)
             end
         end
     end
+
     if #belt_data > 0 then
         Exporter.log_event(game.tick, "belt_contents", belt_data)
     end
