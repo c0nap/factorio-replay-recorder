@@ -1,0 +1,21 @@
+---------------------------------------------------------------------------------------------------
+Version: 0.1.0
+Date: 2026-08-07
+  Features:
+    - Combat zone cropping now requires an actual player (on foot, driving, or piloting a vehicle, including an unmanned spidertron under autopilot) within a configurable radius before recording turns on.
+    - Added mod settings: combat detection radius, zone timeout, and a full recording mode that disables cropping entirely.
+    - Player and vehicle deaths are logged as scoreboard events (score_update), with player_respawn marking the "goal reset".
+    - Chunk snapshots capture every building/turret/wall/nest on first visit instead of a fixed allow-list, so unusual early-game buildings and modded structures are captured automatically.
+    - Weapon and stream impacts are tagged with the specific projectile/stream name that hit.
+    - Vehicles (cars, spidertrons) get the same inventory-delta tracking as players.
+    - Combat, construction, and logistic robots are tracked as mobile entities; belts sample their transport line contents while inside an active zone.
+    - Kills are classified by hostile kind and size for downstream statistics filtering.
+    - Nests are grouped into rough clusters by proximity, and biters/spitters report their unit_group so attack/expansion parties render as a single parented object.
+  Bugfixes:
+    - Fixed O(n^2) string concatenation in the JSON export path.
+    - Stopped replay.json from being truncated on every mod configuration change (previously any mod update mid-campaign erased the recording).
+    - Removed a write-only storage table that grew for the entire length of a save without ever being read.
+    - Fixed full recording mode zones never expiring again after the setting was switched back off.
+    - Fixed vehicle inventory cache entries leaking after the vehicle was destroyed.
+    - Belt contents are now diffed instead of logged unconditionally every tick.
+---------------------------------------------------------------------------------------------------
