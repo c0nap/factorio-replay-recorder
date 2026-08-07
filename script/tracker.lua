@@ -18,7 +18,7 @@ function Tracker.on_entity_died(event)
         }
     end
 
-    -- Record the death event (Functions as your "Goal" / respawn trigger)
+    -- Record the death event
     Exporter.log_event(game.tick, "death_event", {
         victim = {
             name = entity.name,
@@ -42,6 +42,28 @@ function Tracker.on_script_trigger_effect(event)
             CombatZones.trigger_combat_at(surface, position)
             -- Optionally log the projectile instantiation here
         end
+    end
+end
+
+function Tracker.on_entity_damaged(event)
+    local entity = event.entity
+    if not entity or not entity.valid then return end
+    
+    -- Only trigger combat zones if the damage involves a player, vehicle, or military structure.
+    -- This prevents a random biter chewing on a lone transport belt miles away from activating a zone.
+    local is_military = entity.type == "turret" or entity.type == "ammo-turret" or entity.type == "wall"
+    local is_mobile = entity.type == "character" or entity.type == "car" or entity.type == "spider-vehicle"
+    
+    if is_military or is_mobile then
+        CombatZones.trigger_combat_at(entity.surface, entity.position)
+        
+        -- Optionally log the damage event directly
+        Exporter.log_event(game.tick, "damage_event", {
+            target = entity.name,
+            position = entity.position,
+            damage = event.final_damage_amount,
+            dealer = event.cause and event.cause.name or "unknown"
+        })
     end
 end
 
