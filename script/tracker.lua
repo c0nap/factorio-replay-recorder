@@ -195,7 +195,7 @@ local function vehicle_inventory_contents(entity)
     for _, slot in ipairs(slots) do
         local inv = entity.get_inventory(slot)
         if inv then
-            for name, count in pairs(inv.get_contents()) do
+            for name, count in pairs(TrackerEvents.flatten_contents(inv.get_contents())) do
                 contents[name] = (contents[name] or 0) + count
             end
         end
@@ -230,7 +230,7 @@ local function log_belt_contents(entities)
             local lines = {}
             for i = 1, ent.get_max_transport_line_index() do
                 local cache_key = ent.unit_number .. "_" .. i
-                local contents = ent.get_transport_line(i).get_contents()
+                local contents = TrackerEvents.flatten_contents(ent.get_transport_line(i).get_contents())
                 if not contents_equal(storage.belt_line_cache[cache_key], contents) then
                     table.insert(lines, {line = i, contents = contents})
                     storage.belt_line_cache[cache_key] = contents
@@ -270,8 +270,13 @@ function Tracker.tick()
                     orientation = ent.orientation,
                     -- Ties biters/spitters back to the attack/expansion
                     -- party they belong to, so a viewer can render the
-                    -- group as a single parented object.
-                    group_id = ent.unit_group and ent.unit_group.valid and ent.unit_group.group_number or nil,
+                    -- group as a single parented object. `unit_group` is
+                    -- only a valid key on "unit"-type entities (biters,
+                    -- spitters) - reading it on a character/car/robot/etc.
+                    -- throws "LuaEntity doesn't contain key unit_group"
+                    -- instead of returning nil, so it must be type-guarded.
+                    group_id = (ent.type == "unit" and ent.unit_group and ent.unit_group.valid)
+                        and ent.unit_group.group_number or nil,
                 }
                 table.insert(mobile_data, record)
 

@@ -7,8 +7,26 @@ local Exporter = require("script.exporter")
 
 local TrackerEvents = {}
 
--- Diffs `current_contents` (a name -> count table, as returned by
--- LuaInventory.get_contents) against whatever we last saw for `owner_key`,
+-- Factorio 2.0's quality system changed what LuaInventory.get_contents()
+-- (and LuaTransportLine.get_contents()) returns: instead of a simple
+-- {name -> count} table, it's now an array of {name, count, quality}
+-- entries - one per name/quality combination, so a stack of legendary
+-- iron plates and a stack of normal iron plates show up as two separate
+-- entries. This mod doesn't track quality as its own dimension, so this
+-- flattens the array back into a plain {name -> count} table, merging all
+-- qualities of an item into one total - matching the name -> count
+-- semantics everything downstream (log_inventory_delta, belt diffing)
+-- expects.
+function TrackerEvents.flatten_contents(get_contents_result)
+    local flat = {}
+    for _, stack in pairs(get_contents_result) do
+        flat[stack.name] = (flat[stack.name] or 0) + stack.count
+    end
+    return flat
+end
+
+-- Diffs `current_contents` (a name -> count table, e.g. from
+-- flatten_contents above) against whatever we last saw for `owner_key`,
 -- and logs only the items that changed. `owner_key` identifies whoever
 -- owns the inventory (a player index, or a vehicle's unit_number) so
 -- players and vehicles can share this same helper.
@@ -52,7 +70,7 @@ function TrackerEvents.on_player_inventory_changed(event)
     local combined_contents = {}
     for _, inv in ipairs({inv_main, inv_ammo, inv_guns}) do
         if inv then
-            for name, count in pairs(inv.get_contents()) do
+            for name, count in pairs(TrackerEvents.flatten_contents(inv.get_contents())) do
                 combined_contents[name] = (combined_contents[name] or 0) + count
             end
         end
