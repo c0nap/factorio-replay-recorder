@@ -86,6 +86,22 @@ function Tracker.on_entity_died(event)
 
     local scoreable = is_scoreable_kind(entity.type) and entity.force.name ~= "enemy"
 
+    -- A dying player character's own corpse doesn't exist yet at this
+    -- point (on_post_entity_died creates it, after this event), and that
+    -- later event only carries the ORIGINAL entity's unit_number, not a
+    -- direct reference back to this one - so identity/cause is stashed
+    -- here, keyed by that same unit_number, for on_post_entity_died to
+    -- pick back up once the corpse exists. Non-player characters (no
+    -- .player) are skipped - there's no player identity to attach.
+    if entity.type == "character" and entity.player and entity.unit_number then
+        storage.pending_corpse_info[entity.unit_number] = {
+            player_index = entity.player.index,
+            player_name = entity.player.name,
+            death_tick = game.tick,
+            killer = killer_data,
+        }
+    end
+
     -- Deaths always try to open/extend a combat zone (gated internally on
     -- player proximity), same as before. What's new is that we only bother
     -- writing the death itself to the file if it happened somewhere we
@@ -109,10 +125,9 @@ function Tracker.on_entity_died(event)
         -- been near a player leaves a permanent entry behind, growing the
         -- save forever over a long campaign even though the entity itself
         -- is gone for good. Corpses are deliberately not covered here -
-        -- they don't fire on_entity_died when they eventually decay, so
-        -- their cache entries do leak; a proper fix needs
-        -- script.register_on_object_destroyed, which isn't confirmed API
-        -- territory this round. Documented, not silently accepted.
+        -- they don't fire on_entity_died when they eventually decay/expire,
+        -- they fire on_character_corpse_expired instead (see
+        -- Tracker.on_character_corpse_expired below).
         storage.inventory_cache[cleanup_prefix .. entity.unit_number] = nil
     end
 
@@ -150,6 +165,49 @@ function Tracker.on_entity_died(event)
         killer = killer_data,
         loot = loot,
     })
+end
+
+-- Fires after on_entity_died, once the corpse(s) an entity's death
+-- produced actually exist. This is the only place a player corpse's
+-- provenance ("this is a player corpse from <time>, here's who and what
+-- killed them") can be recorded - on_entity_died fires too early (the
+-- corpse doesn't exist yet) and the corpse's own inventory_delta stream
+-- (Tracker.scan_physical_items) has nowhere to carry this one-time
+-- context. `event.unit_number` is the ORIGINAL died entity's unit_number
+-- (not the corpse's), which is exactly what on_entity_died stashed
+-- pending info under above - correlates the two without any timing or
+-- position matching.
+function Tracker.on_post_entity_died(event)
+    local pending = storage.pending_corpse_info[event.unit_number]
+    storage.pending_corpse_info[event.unit_number] = nil
+    if not pending then return end
+
+    for _, corpse in ipairs(event.corpses or {}) do
+        if corpse.valid and corpse.type == "character-corpse" and corpse.unit_number then
+            Exporter.log_event(game.tick, "corpse_created", {
+                owner = "corpse_" .. corpse.unit_number,
+                position = corpse.position,
+                player_index = pending.player_index,
+                player_name = pending.player_name,
+                death_tick = pending.death_tick,
+                killer = pending.killer,
+            })
+        end
+    end
+end
+
+-- Fires when a character corpse times out or is fully looted (not when
+-- mined - see on_pre_player_mined_item for that, not hooked here since
+-- mining a corpse is rare and the cache entry would just get overwritten
+-- by the next scan anyway). This is the actual fix for the "corpse cache
+-- entries leak forever" gap: without this, storage.inventory_cache["corpse_"
+-- ..id] has no event that ever tells us the corpse is gone for good.
+function Tracker.on_character_corpse_expired(event)
+    local corpse = event.corpse
+    if not corpse or not corpse.valid or not corpse.unit_number then return end
+
+    storage.inventory_cache["corpse_" .. corpse.unit_number] = nil
+    Exporter.log_event(game.tick, "corpse_expired", {owner = "corpse_" .. corpse.unit_number})
 end
 
 function Tracker.on_player_respawned(event)

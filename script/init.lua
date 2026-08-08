@@ -39,6 +39,15 @@ local function ensure_storage()
     storage.belt_line_cache = storage.belt_line_cache or {}
     storage.fluid_cache = storage.fluid_cache or {}
 
+    -- A dying character's unit_number -> {player_index, player_name,
+    -- death_tick, killer}, bridging on_entity_died (where the info is
+    -- available but the corpse doesn't exist yet) to on_post_entity_died
+    -- (where the corpse exists but only the original unit_number is
+    -- carried over) - see Tracker.on_entity_died/on_post_entity_died.
+    -- Always cleared by on_post_entity_died the tick after it's written,
+    -- so this never holds more than one tick's worth of pending deaths.
+    storage.pending_corpse_info = storage.pending_corpse_info or {}
+
     -- Was written every time a biter unit group formed but never actually
     -- read back anywhere; dropping it stops it from growing forever across
     -- a long save. Explicitly cleared here so saves from before this fix
