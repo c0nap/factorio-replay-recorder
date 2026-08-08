@@ -9,6 +9,7 @@
 local Exporter = require("script.exporter")
 local Config = require("script.config")
 local Classify = require("script.classify")
+local Logistics = require("script.logistics")
 
 local CombatZones = {}
 
@@ -177,11 +178,32 @@ local function dump_static_chunk_data(surface, chunk_x, chunk_y)
 
     cluster_spawners(spawners)
 
+    -- 3. Storage/provider/requester containers within logistic reach of
+    -- this chunk (design doc: "chests within logistic reach of the
+    -- battlefield"), not just ones physically standing in it. Always
+    -- checks "player" (the common single-force case, including chunks
+    -- with no player buildings of their own but that a nearby roboport
+    -- still reaches) plus any other non-enemy force actually seen here.
+    local force_names = {player = true}
+    for _, record in ipairs(static_data) do
+        if record.force and record.force ~= "enemy" and record.force ~= "neutral" then
+            force_names[record.force] = true
+        end
+    end
+
+    -- This is new, less battle-tested integration territory (a whole
+    -- separate API - logistics networks - rather than just more LuaEntity
+    -- fields), so it's pcall-wrapped at the top level: if anything about
+    -- it goes wrong, the rest of the chunk snapshot (tiles/statics, the
+    -- part every consumer actually depends on) still gets written.
+    local ok, logistics_context = pcall(Logistics.context_for_area, surface, area, force_names)
+
     Exporter.log_event(game.tick, "chunk_snapshot", {
         chunk = {chunk_x, chunk_y},
         surface = surface.name,
         tiles = tile_data,
-        statics = static_data
+        statics = static_data,
+        logistics = ok and logistics_context or nil,
     })
 end
 

@@ -19,6 +19,7 @@ This data is designed to be ingested by standalone desktop visualizers, allowing
 * **Event-Driven Tracking:** Projectile/stream impacts, fire and acid patches appearing and expiring, inventory changes, and belt contents are all recorded as diffs or one-shot events rather than by polling everything every tick.
 * **AI Grouping:** Nests captured in a snapshot are clustered into rough "bases" by proximity; biters/spitters report the `unit_group` they belong to and, individually, the specific spawner they hatched from, so a viewer can render an attack/expansion party or a nest's offspring as one object.
 * **Mod-Agnostic:** Nothing is matched by hardcoded entity name. Combat detection is wired up for every projectile/stream prototype in the data stage, and building capture works by *excluding* known mobile/decorative entity types rather than matching an allow-list - a mod's new biter, turret, or building shows up automatically.
+* **Logistic Reach:** A chunk snapshot also captures every storage/provider/requester container reachable by a logistics network that touches it - not just the chests physically standing in that chunk - along with their contents at that moment, so supply lines feeding the battlefield are visible even if the depot itself is elsewhere.
 * **Full Recording Mode:** A settings toggle to disable cropping entirely and record every chunk, every tick, for when you need everything and not just combat. It produces very large files - see [Settings](#settings) below.
 
 ## Settings
@@ -39,7 +40,7 @@ Data is exported to Factorio's `script-output/replay.json` as newline-delimited 
 
 | `type` | Fired when | `data` contains |
 |---|---|---|
-| `chunk_snapshot` | A chunk records for the first time | `tiles`, `statics` (every building/turret/wall/nest, tagged `is_defense` for turrets/walls/gates and grouped into nest `cluster`s) |
+| `chunk_snapshot` | A chunk records for the first time | `tiles`, `statics` (every building/turret/wall/nest, tagged `is_defense` for turrets/walls/gates and grouped into nest `cluster`s), and `logistics` (storage/provider/requester containers reachable by a logistics network touching this chunk, each with its contents at capture time - see below) |
 | `mobile_positions` | Every tick a zone is active | Position/orientation of every unit, character, vehicle, wagon, and bot in the zone, tagged with `group_id` if part of a unit group and `spawner_id` for a biter/spitter's originating nest |
 | `death_event` | Any tracked entity dies | Victim (with `hostile_kind`/`hostile_size` for biters/spitters/worms/spawners), killer if any, and `loot` (items dropped) when non-empty |
 | `score_update` | A player or a manned/piloted vehicle dies | Force, killer, and that force's running death count |
