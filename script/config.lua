@@ -48,4 +48,13 @@ function Config.chain_max_hops()
     return settings.global["rrec-chain-max-hops"].value
 end
 
+-- Search radius (in tiles) used to find which inserters service a given
+-- chest - chests have no "what am I connected to" query of their own, and
+-- there's no documented max-inserter-reach constant, so this stays a
+-- user-tunable candidate-generation bound rather than a hardcoded guess.
+-- See script/item_chains.lua's servicing_inserters.
+function Config.inserter_search_radius()
+    return settings.global["rrec-inserter-search-radius"].value
+end
+
 return Config

@@ -61,19 +61,20 @@ local function belt_neighbour_entities(entity)
     return out
 end
 
--- Inserters have pickup_target/drop_target; chests have no equivalent
--- "what am I connected to" query. To discover which inserters service a
--- given chest, search a small radius around it (inserter reach is at
--- most a couple of tiles in vanilla) and keep the ones that actually
--- target it. INSERTER_SEARCH_RADIUS is a heuristic, not a documented
--- exact reach value - generous enough to catch reach-bonus inserters
--- without being so large it starts pulling in unrelated inserters.
-local INSERTER_SEARCH_RADIUS = 3
-
+-- Inserters have pickup_target/drop_target (confirmed, read directly in
+-- inserter_targets below); chests have no equivalent "what am I connected
+-- to" query, so discovering which inserters service a given chest means
+-- searching a radius around it and keeping only the ones that actually
+-- target it - there's no documented max-inserter-reach constant to
+-- compute an exact bound from, so this stays a deliberate, user-tunable
+-- search radius (Config.inserter_search_radius(), default 3) rather than
+-- a silently hardcoded number. The radius only generates candidates - the
+-- actual correctness comes entirely from the pickup_target/drop_target
+-- identity check below, which is confirmed API, not a guess.
 local function servicing_inserters(entity)
     local ok, found = pcall(function()
         return entity.surface.find_entities_filtered{
-            position = entity.position, radius = INSERTER_SEARCH_RADIUS, type = "inserter"
+            position = entity.position, radius = Config.inserter_search_radius(), type = "inserter"
         }
     end)
     if not ok then return {} end

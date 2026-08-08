@@ -64,5 +64,14 @@ data:extend({
         minimum_value = 1,
         maximum_value = 200,
         order = "g"
+    },
+    {
+        type = "int-setting",
+        name = "rrec-inserter-search-radius",
+        setting_type = "runtime-global",
+        default_value = 3,
+        minimum_value = 1,
+        maximum_value = 10,
+        order = "h"
     }
 })
