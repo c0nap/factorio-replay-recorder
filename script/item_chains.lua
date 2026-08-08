@@ -28,38 +28,34 @@ local Config = require("script.config")
 
 local ItemChains = {}
 
-local BELT_TYPES = {["transport-belt"] = true, ["underground-belt"] = true, ["splitter"] = true}
+local BELT_TYPES = {["transport-belt"] = true, ["underground-belt"] = true, ["splitter"] = true, ["linked-belt"] = true}
 local CONTAINER_TYPES = {["container"] = true, ["logistic-container"] = true}
 
--- `belt_neighbours`'s exact internal shape isn't confirmed against real
--- docs (documented only as "R table", not what's inside it), so rather
--- than assume specific keys (like .inputs/.outputs), this digs through
--- whatever shape it turns out to be and pulls out every valid LuaEntity
--- it finds - tolerant of the table being flat, nested, or keyed by
--- direction, as long as the leaves are entities. Depth-limited as a
--- sanity bound, not because deep nesting is expected.
-local function collect_entities(value, out, depth)
-    if type(value) ~= "table" or depth > 4 then return end
-    local ok, is_entity_like = pcall(function() return value.valid ~= nil end)
-    if ok and is_entity_like then
-        if value.valid then table.insert(out, value) end
-        return
-    end
-    for _, v in pairs(value) do
-        collect_entities(v, out, depth + 1)
-    end
-end
-
+-- `belt_neighbours`'s confirmed shape: {inputs = array[LuaEntity], outputs
+-- = array[LuaEntity]} - the belt-connectable entities that feed into or
+-- take from this one. `underground_belt_neighbour`/`linked_belt_neighbour`
+-- are separate singular fields for the OTHER end of an underground/linked
+-- belt pair, which belt_neighbours does not include.
 local function belt_neighbour_entities(entity)
     local out = {}
     local ok, neighbours = pcall(function() return entity.belt_neighbours end)
     if ok and neighbours then
-        collect_entities(neighbours, out, 1)
+        for _, e in ipairs(neighbours.inputs or {}) do
+            if e.valid then table.insert(out, e) end
+        end
+        for _, e in ipairs(neighbours.outputs or {}) do
+            if e.valid then table.insert(out, e) end
+        end
     end
 
     local ok2, underground = pcall(function() return entity.underground_belt_neighbour end)
     if ok2 and underground and underground.valid then
         table.insert(out, underground)
+    end
+
+    local ok3, linked = pcall(function() return entity.linked_belt_neighbour end)
+    if ok3 and linked and linked.valid then
+        table.insert(out, linked)
     end
 
     return out

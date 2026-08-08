@@ -26,41 +26,31 @@
 -- only reads/reports it once, from a single representative member, using
 -- that discovery walk itself as the de-dup mechanism instead of an ID.
 --
--- Caveat, stated rather than hidden: a multi-fluidbox entity (a pump has
--- two, one per side) COULD belong to two different segments on its two
--- sides, and this walk doesn't try to distinguish that - it treats
--- everything reachable through get_fluid_box_neighbours from a given
--- fluidbox as one component. Worst case for getting that wrong is a
--- handful of redundant events around pumps/multi-box entities, not the
--- 50x duplication a long plain pipe run would produce without this.
+-- Multi-fluidbox entities (a pump has two, one per side) are correctly
+-- segmented: get_fluid_box_neighbours(index) returns FluidBoxNeighbourRecord
+-- entries ({entity, index}) naming the SPECIFIC fluidbox index on the
+-- neighbouring entity that's connected - the discovery walk below only
+-- ever follows that exact index, never every fluidbox the neighbour
+-- happens to have, so a pump's two independent sides can never be merged
+-- into one reported segment.
 local TrackerEvents = require("script.tracker_events")
 
 local FluidChains = {}
 
 local FLUID_SEED_TYPES = {"pipe", "pipe-to-ground", "storage-tank", "pump", "fluid-turret"}
 
--- FluidBoxNeighbourRecord's exact field name for the neighbouring entity
--- isn't confirmed, so this tries the plausible shapes rather than assume
--- one: a record with an .owner or .entity field, or the record itself
--- being the entity.
-local function neighbour_entity_of(record)
-    if type(record) ~= "table" then return nil end
-    local candidate = record.owner or record.entity or record[1] or record
-    if type(candidate) == "table" then
-        local ok, valid = pcall(function() return candidate.valid end)
-        if ok and valid then return candidate end
-    end
-    return nil
-end
-
+-- FluidBoxNeighbourRecord's confirmed shape: {entity = LuaEntity, index =
+-- FluidStorageIndex} - the specific neighbouring fluidbox this one is
+-- connected to, not just "some fluidbox on that entity".
 local function fluidbox_neighbours(entity, index)
     local ok, neighbours = pcall(function() return entity.get_fluid_box_neighbours(index) end)
     if not ok or not neighbours then return {} end
 
     local out = {}
     for _, record in ipairs(neighbours) do
-        local owner = neighbour_entity_of(record)
-        if owner then table.insert(out, owner) end
+        if record.entity and record.entity.valid and record.index then
+            table.insert(out, {entity = record.entity, index = record.index})
+        end
     end
     return out
 end
@@ -90,12 +80,13 @@ local function discover_component(start_entity, start_index, visited_boxes)
             visited_boxes[key] = true
             table.insert(component, current)
 
+            -- Only the SPECIFIC fluidbox index each neighbour record
+            -- names, not every fluidbox the neighbouring entity happens
+            -- to have - this is what keeps a multi-fluidbox entity's
+            -- independent sides from ever being merged into one segment.
             for _, neighbour in ipairs(fluidbox_neighbours(current.entity, current.index)) do
-                local ok, count = pcall(function() return neighbour.fluids_count end)
-                if ok and count and neighbour.unit_number then
-                    for i = 1, count do
-                        table.insert(stack, {entity = neighbour, index = i})
-                    end
+                if neighbour.entity.unit_number then
+                    table.insert(stack, neighbour)
                 end
             end
         end
