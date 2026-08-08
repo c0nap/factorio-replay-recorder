@@ -25,6 +25,20 @@ local function ensure_storage()
     -- snapshots use to group spawners into "bases".
     storage.spawned_by = storage.spawned_by or {}
 
+    -- "surface_force_networkid" -> {expires_at}. A logistics network's
+    -- eligibility window for Tier 2 sampling - see script/logistics.lua.
+    storage.active_networks = storage.active_networks or {}
+
+    -- chunk_id -> the set of forces seen in that chunk's static dump, so
+    -- Logistics.tick() knows which forces to re-check per active zone
+    -- without re-scanning the chunk's statics every sample.
+    storage.chunk_force_names = storage.chunk_force_names or {}
+
+    -- Diff caches for belt lines and fluid segments - same lazy-init
+    -- pattern as storage.inventory_cache, just made explicit here too.
+    storage.belt_line_cache = storage.belt_line_cache or {}
+    storage.fluid_cache = storage.fluid_cache or {}
+
     -- Was written every time a biter unit group formed but never actually
     -- read back anywhere; dropping it stops it from growing forever across
     -- a long save. Explicitly cleared here so saves from before this fix

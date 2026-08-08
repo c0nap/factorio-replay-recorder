@@ -44,6 +44,21 @@ local function record_kill_stat(entity)
     return kind, size
 end
 
+-- storage.inventory_cache key prefix per entity type whose owner_key is
+-- "<prefix><unit_number>" - used to clean up on death so a long-dead
+-- entity's cache entry doesn't linger for the rest of the save.
+local CACHE_CLEANUP_PREFIX = {
+    ["car"] = "vehicle_",
+    ["spider-vehicle"] = "vehicle_",
+    ["cargo-wagon"] = "vehicle_",
+    ["artillery-wagon"] = "vehicle_",
+    ["container"] = "container_",
+    ["logistic-container"] = "container_",
+    ["construction-robot"] = "robot_",
+    ["logistic-robot"] = "robot_",
+    ["inserter"] = "inserter_",
+}
+
 function Tracker.on_entity_died(event)
     local entity = event.entity
     if not entity.valid then return end
@@ -88,11 +103,17 @@ function Tracker.on_entity_died(event)
         record_score_event(entity, killer_data)
     end
 
-    if entity.type == "car" or entity.type == "spider-vehicle" then
-        -- Otherwise every vehicle that's ever fought near a player leaves
-        -- a permanent entry behind, growing the save forever over a long
-        -- campaign even though the vehicle itself is gone for good.
-        storage.inventory_cache["vehicle_" .. entity.unit_number] = nil
+    local cleanup_prefix = CACHE_CLEANUP_PREFIX[entity.type]
+    if cleanup_prefix and entity.unit_number then
+        -- Otherwise every vehicle/container/robot/inserter that's ever
+        -- been near a player leaves a permanent entry behind, growing the
+        -- save forever over a long campaign even though the entity itself
+        -- is gone for good. Corpses are deliberately not covered here -
+        -- they don't fire on_entity_died when they eventually decay, so
+        -- their cache entries do leak; a proper fix needs
+        -- script.register_on_object_destroyed, which isn't confirmed API
+        -- territory this round. Documented, not silently accepted.
+        storage.inventory_cache[cleanup_prefix .. entity.unit_number] = nil
     end
 
     if entity.type == "unit" and entity.unit_number then
@@ -279,47 +300,36 @@ local function unit_group_id(ent)
     return storage.unit_group_membership[ent.unit_number]
 end
 
-local BELT_TYPES = {["transport-belt"] = true, ["underground-belt"] = true, ["splitter"] = true}
+-- Everything "physically here" that isn't already covered by the mobile
+-- loop or belt loop above: chests, corpses, and inserter hands. Read every
+-- tick, same as belts - these are cheap, bounded-by-chunk-size queries,
+-- and (design doc) items in a chest or an inserter's grip are exactly the
+-- "immediately here on the battlefield" tier, not the "probably on the
+-- way" one that script/logistics.lua and script/item_chains.lua sample on
+-- a slow interval instead.
+local PHYSICAL_ITEM_TYPES = {"container", "logistic-container", "character-corpse", "inserter"}
 
-local function contents_equal(a, b)
-    a, b = a or {}, b or {}
-    for item, count in pairs(a) do
-        if b[item] ~= count then return false end
-    end
-    for item, count in pairs(b) do
-        if a[item] ~= count then return false end
-    end
-    return true
-end
-
--- Belts are extremely common near any base, so if we logged every belt's
--- full contents on every tick a fight was active, belt spam alone could
--- dwarf the rest of the replay. Instead, cache each line's last-seen
--- contents and only write out lines that actually changed since - the
--- same "diff, don't dump" approach used for inventories.
-local function log_belt_contents(entities)
-    storage.belt_line_cache = storage.belt_line_cache or {}
-    local belt_data = {}
+local function scan_physical_items(surface, area)
+    local entities = surface.find_entities_filtered{area = area, type = PHYSICAL_ITEM_TYPES}
 
     for _, ent in ipairs(entities) do
-        if BELT_TYPES[ent.type] then
-            local lines = {}
-            for i = 1, ent.get_max_transport_line_index() do
-                local cache_key = ent.unit_number .. "_" .. i
-                local contents = TrackerEvents.flatten_contents(ent.get_transport_line(i).get_contents())
-                if not contents_equal(storage.belt_line_cache[cache_key], contents) then
-                    table.insert(lines, {line = i, contents = contents})
-                    storage.belt_line_cache[cache_key] = contents
-                end
-            end
-            if #lines > 0 then
-                table.insert(belt_data, {id = ent.unit_number, name = ent.name, position = ent.position, lines = lines})
+        if ent.valid and ent.unit_number then
+            if ent.type == "container" or ent.type == "logistic-container" then
+                TrackerEvents.log_inventory_delta("container_" .. ent.unit_number, "container", TrackerEvents.container_contents(ent))
+            elseif ent.type == "character-corpse" then
+                -- Corpses aren't in the static chunk dump (they're
+                -- dynamic - they appear and eventually decay) and
+                -- inventory_delta carries no position field otherwise,
+                -- so this is the only place a corpse's location is ever
+                -- reported. Not redundant with death_event's `loot`:
+                -- loot is what was dropped at the moment of death, this
+                -- is what happens to that pile afterward (looting,
+                -- partial decay).
+                TrackerEvents.log_inventory_delta("corpse_" .. ent.unit_number, "corpse", TrackerEvents.corpse_contents(ent), {position = ent.position})
+            elseif ent.type == "inserter" then
+                TrackerEvents.log_inventory_delta("inserter_" .. ent.unit_number, "inserter_hand", TrackerEvents.held_stack_contents(ent))
             end
         end
-    end
-
-    if #belt_data > 0 then
-        Exporter.log_event(game.tick, "belt_contents", belt_data)
     end
 end
 
@@ -352,12 +362,19 @@ function Tracker.tick()
 
                 if VEHICLE_INVENTORY_SLOTS[ent.type] then
                     TrackerEvents.log_inventory_delta("vehicle_" .. ent.unit_number, "vehicle", vehicle_inventory_contents(ent))
+                elseif ent.type == "construction-robot" or ent.type == "logistic-robot" then
+                    local inv = ent.get_inventory(defines.inventory.robot_cargo)
+                    if inv then
+                        TrackerEvents.log_inventory_delta("robot_" .. ent.unit_number, "robot", TrackerEvents.flatten_contents(inv.get_contents()))
+                    end
                 end
             end
         end
 
         local belt_entities = zone.surface.find_entities_filtered{area = area, type = {"transport-belt", "underground-belt", "splitter"}}
-        log_belt_contents(belt_entities)
+        TrackerEvents.log_belt_contents(belt_entities)
+
+        scan_physical_items(zone.surface, area)
     end
 
     if #mobile_data > 0 then

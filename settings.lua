@@ -28,5 +28,41 @@ data:extend({
         minimum_value = 1,
         maximum_value = 300,
         order = "c"
+    },
+    {
+        type = "double-setting",
+        name = "rrec-distant-sample-interval-seconds",
+        setting_type = "runtime-global",
+        default_value = 5,
+        minimum_value = 1,
+        maximum_value = 300,
+        order = "d"
+    },
+    {
+        type = "double-setting",
+        name = "rrec-network-activity-window-seconds",
+        setting_type = "runtime-global",
+        default_value = 30,
+        minimum_value = 5,
+        maximum_value = 600,
+        order = "e"
+    },
+    {
+        type = "int-setting",
+        name = "rrec-chain-near-hops",
+        setting_type = "runtime-global",
+        default_value = 5,
+        minimum_value = 1,
+        maximum_value = 50,
+        order = "f"
+    },
+    {
+        type = "int-setting",
+        name = "rrec-chain-max-hops",
+        setting_type = "runtime-global",
+        default_value = 30,
+        minimum_value = 1,
+        maximum_value = 200,
+        order = "g"
     }
 })

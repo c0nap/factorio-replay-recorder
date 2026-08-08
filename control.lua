@@ -9,6 +9,7 @@ local Exporter = require("script.exporter")
 local CombatZones = require("script.combat_zones")
 local Tracker = require("script.tracker")
 local TrackerEvents = require("script.tracker_events")
+local Logistics = require("script.logistics")
 local Init = require("script.init")
 local Config = require("script.config")
 
@@ -62,6 +63,13 @@ local FLUSH_INTERVAL_TICKS = 60
 script.on_event(defines.events.on_tick, function()
     CombatZones.tick()
     Tracker.tick()
+
+    -- "Distant" data - logistics network contents, far-chain item
+    -- rollups, fluid segments - is sampled far less often than the
+    -- per-tick physical scan above; see Config.distant_sample_interval_ticks.
+    if game.tick % Config.distant_sample_interval_ticks() == 0 then
+        Logistics.tick(storage.active_zones, CombatZones.is_zone_active, CombatZones.chunk_area)
+    end
 
     if game.tick % FLUSH_INTERVAL_TICKS == 0 then
         Exporter.flush()
