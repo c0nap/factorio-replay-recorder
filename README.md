@@ -70,6 +70,25 @@ If you're new to Factorio modding and browsing this codebase, a couple of things
 * **`storage`** is the mod's persistent state table - anything put in it is saved with the game and restored on load. It's why the mod checks `storage.x = storage.x or {}` on setup instead of always creating a fresh table: that pattern only initializes state the first time, and leaves it alone on every subsequent load.
 * **`on_init` vs `on_configuration_changed`** - `on_init` only fires once, for a brand new save. `on_configuration_changed` fires whenever mods are added, removed, or updated on an *existing* save, and must be safe to run repeatedly without destroying anything already recorded.
 
+## Testing
+
+There's no automated test suite - the mod's behavior depends on a live
+player character interacting with a running Factorio simulation, which
+isn't something a headless CI job can easily stand in for. Instead:
+
+* [`docs/testing-checklist.md`](docs/testing-checklist.md) walks through a
+  set of console commands and in-game actions in a real (throwaway) save
+  that exercise each feature - spawning a biter fight, killing a player to
+  check the scoring/respawn flow, toggling full recording mode, and so on.
+* [`tools/inspect_replay.py`](tools/inspect_replay.py) reads the
+  `replay.json` that produces and prints a concise summary (event counts,
+  tick range, scoreboard, kills by kind/size, and sample payloads) instead
+  of you having to read raw JSONL by hand. No dependencies beyond Python's
+  standard library:
+  ```
+  python3 tools/inspect_replay.py
+  ```
+
 ## License
 
 See [LICENSE](LICENSE).
