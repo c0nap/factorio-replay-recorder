@@ -19,7 +19,11 @@ This data is designed to be ingested by standalone desktop visualizers, allowing
 * **Event-Driven Tracking:** Projectile/stream impacts, fire and acid patches appearing and expiring, inventory changes, and belt contents are all recorded as diffs or one-shot events rather than by polling everything every tick.
 * **AI Grouping:** Nests captured in a snapshot are clustered into rough "bases" by proximity; biters/spitters report the `unit_group` they belong to and, individually, the specific spawner they hatched from, so a viewer can render an attack/expansion party or a nest's offspring as one object.
 * **Mod-Agnostic:** Nothing is matched by hardcoded entity name. Combat detection is wired up for every projectile/stream prototype in the data stage, and building capture works by *excluding* known mobile/decorative entity types rather than matching an allow-list - a mod's new biter, turret, or building shows up automatically.
-* **Logistic Reach:** A chunk snapshot also captures every storage/provider/requester container reachable by a logistics network that touches it - not just the chests physically standing in that chunk - along with their contents at that moment, so supply lines feeding the battlefield are visible even if the depot itself is elsewhere.
+* **Logistic Reach:** A chunk snapshot captures the roster of every storage/provider/requester container reachable by a logistics network that touches it - not just the chests physically standing in that chunk. Their contents are then sampled on a slow, configurable interval (not every tick - a shared network can span an entire base) for as long as the network keeps showing robot activity, so supply lines feeding the battlefield stay visible even when the depot itself is elsewhere.
+* **Physical Item Tracking:** Containers, corpses, and inserter hands physically inside a zone are diffed every tick, the same way belts already were - chests, what's mid-transfer, and what a fallen player dropped are all part of "immediately here on the battlefield."
+* **Long-Distance Supply Chains:** Belts and inserters are followed outward from a zone - well past its chunk boundary - via belt-to-belt connections and inserter pickup/drop targets. Close hops get tracked precisely; distant hops are rolled up into a compact "roughly this many of this item, this direction from the fight" summary instead of one event per far-off entity, so a huge buffer chest 40 belts away shows up as one line, not forty.
+* **Fluid Chains:** Pipes, storage tanks, pumps, and flamethrower turret fuel are tracked the same way, following the pipe network's own internal "fluid segments" - each connected run of pipe is read and reported once, however long it is, not once per pipe.
+* **Item Motion Is Implicit:** There's no separate "item moved" event - an item owned by a player, vehicle, or robot is tracked under that owner's `inventory_delta`, and that owner's position is tracked every tick via `mobile_positions`. Cross-referencing the two (by `owner`/`id`) tells a viewer where those items physically are at any moment, including while their owner is moving.
 * **Full Recording Mode:** A settings toggle to disable cropping entirely and record every chunk, every tick, for when you need everything and not just combat. It produces very large files - see [Settings](#settings) below.
 
 ## Settings
@@ -30,6 +34,10 @@ All settings live under *Settings > Mod Settings > Map* and can be changed witho
 |---|---|---|
 | Combat detection radius | 48 tiles | How close a player has to be to a fight before it starts recording. Lower = smaller files, higher = catches more of the action. |
 | Zone timeout | 10 seconds | How long a chunk keeps recording after the last hit before it goes quiet again. |
+| Distant sample interval | 5 seconds | How often logistics network contents, far-chain item rollups, and fluid segments are re-sampled. These are all "probably on the way, not immediately here" data - lower for fresher distant data at the cost of file size, higher to shrink it. |
+| Network activity window | 30 seconds | How long a logistics network keeps counting as reachable after it was last seen with any robots, so a network doesn't flicker in and out just because its robots are all briefly mid-delivery. |
+| Chain near hops | 5 | Belt/inserter chain hops within this distance of a zone get exact per-entity tracking; beyond it, they're rolled up into a compact summary instead. |
+| Chain max hops | 30 | Absolute limit on how far a belt/inserter chain walk follows outward from a zone, near or far. |
 | Full recording mode | Off | Disables cropping and records every generated chunk continuously. **Produces enormous files** (potentially gigabytes per hour) - meant for short recordings or debugging, not routine play. |
 
 If you don't write Lua and just want to tune how aggressively replays are cropped, this is the only place you need to look - the settings menu is the supported way to change this mod's behavior, no code editing required.
@@ -40,7 +48,7 @@ Data is exported to Factorio's `script-output/replay.json` as newline-delimited 
 
 | `type` | Fired when | `data` contains |
 |---|---|---|
-| `chunk_snapshot` | A chunk records for the first time | `tiles`, `statics` (every building/turret/wall/nest, tagged `is_defense` for turrets/walls/gates and grouped into nest `cluster`s), and `logistics` (storage/provider/requester containers reachable by a logistics network touching this chunk, each with its contents at capture time - see below) |
+| `chunk_snapshot` | A chunk records for the first time | `tiles`, `statics` (every building/turret/wall/nest, tagged `is_defense` for turrets/walls/gates and grouped into nest `cluster`s), and `logistics` - a one-time *roster* (no contents, not capped) of every storage/provider/requester container reachable by a logistics network touching this chunk, plus that network's robot counts *at capture time* (`robots_at_capture`). Contents aren't here - they arrive later via ongoing `inventory_delta` events (see below), since a roster is a structural fact but contents go stale. |
 | `mobile_positions` | Every tick a zone is active | Position/orientation of every unit, character, vehicle, wagon, and bot in the zone, tagged with `group_id` if part of a unit group and `spawner_id` for a biter/spitter's originating nest |
 | `death_event` | Any tracked entity dies | Victim (with `hostile_kind`/`hostile_size` for biters/spitters/worms/spawners), killer if any, and `loot` (items dropped) when non-empty |
 | `score_update` | A player or a manned/piloted vehicle dies | Force, killer, and that force's running death count |
@@ -49,10 +57,14 @@ Data is exported to Factorio's `script-output/replay.json` as newline-delimited 
 | `projectile_impact` | A tracked projectile/stream hits something | Weapon name, source, target position/entity |
 | `effect_created` | A fire/acid patch is created (a spitter's acid, a flamethrower, ...) | Name, position, source entity if known |
 | `effect_expired` | A fire/acid patch fades out on its own | Name, position |
-| `inventory_delta` | A player's or vehicle's (car/spidertron/cargo-wagon/artillery-wagon) inventory changes | Owner, owner kind, list of `{item, delta}` changes |
-| `belt_contents` | A belt's contents change while in an active zone | Per-line item counts, only for lines that changed |
+| `inventory_delta` | Any tracked owner's item contents change | `owner` (a stable key, e.g. `player_3`, `vehicle_118`, `container_204`), `owner_kind` (`player`/`vehicle`/`container`/`corpse`/`robot`/`inserter_hand`), a list of `{item, delta}` changes, and `position` for owners (like corpses) that aren't otherwise position-tracked elsewhere |
+| `fluid_delta` | A tracked fluid segment's contents change | `owner` (`fluid_<entity>_<fluidname>`), a list of `{fluid, delta}` changes, and the representative entity's `position` |
+| `belt_contents` | A belt's contents change while in an active zone or reached by a chain walk | Per-line item counts, only for lines that changed |
+| `item_distribution` | The far end of a belt/inserter chain has any tracked contents | Per (item, rough direction from the zone) entries: `approx_count`, a `centroid` position, and how many entities that estimate is built from |
 | `unit_group_created` | A biter/spitter group forms up | Group id, force, position, human-readable state (`gathering`, `attacking_target`, ...) |
 | `zone_expired` | A chunk stops recording after its timeout | Chunk id |
+
+**Cross-referencing item location and motion:** there's no dedicated "item moved" event. An item owned by a player, vehicle, or robot shows up under that owner's `inventory_delta` (`owner_kind` = `player`/`vehicle`/`robot`), and that same owner's position is in every `mobile_positions` update (matched by `id`/`owner`). To know where a player's ammo physically is at tick T, look up their position in `mobile_positions` at T - the two streams are deliberately kept separate (position every tick is cheap and needed for combat rendering regardless of inventory; inventory only needs to be emitted when it actually changes) rather than duplicating position onto every item event.
 
 ## For Modders
 
@@ -90,6 +102,18 @@ isn't something a headless CI job can easily stand in for. Instead:
   ```
   python3 tools/inspect_replay.py
   ```
+
+## Known Limitations
+
+Documented here rather than left for someone to discover and assume is a bug:
+
+* **Corpse cache entries leak.** Corpses don't fire `on_entity_died` when they eventually decay/despawn (as opposed to being destroyed), so their inventory-diff cache entry isn't cleaned up the way a destroyed vehicle's or container's is. A proper fix likely needs `script.register_on_object_destroyed`, not yet used in this mod.
+* **`belt_neighbours`'s exact internal shape isn't confirmed** against official docs (only that it's "a table"). Belt-chain traversal reads it with a generic, tolerant walk that pulls out any valid entity it finds regardless of the table's structure, rather than assuming specific keys.
+* **`FluidBoxNeighbourRecord`'s field name for the neighbouring entity isn't confirmed either** - fluid-chain traversal tries a few plausible shapes defensively for the same reason.
+* **A multi-fluidbox entity (e.g. a pump) isn't guaranteed correctly segmented.** Its two sides could belong to different fluid segments; the discovery walk that de-duplicates fluid segment reads doesn't currently distinguish that case. Worst case is a handful of redundant `fluid_delta` events around pumps/tanks, not the large-scale duplication this de-dup exists to prevent for long pipe runs.
+* **Personal logistics (armor) vs. base/roboport networks aren't distinguished.** `find_logistic_networks_by_construction_area` may return both without any confirmed way to tell them apart; both are treated uniformly. A player's own requester point is filtered out of container lists regardless, which limits the practical impact.
+* **Inserter reach for "which inserters service this chest" is a heuristic (3-tile search radius), not a documented exact value.** Generous enough to catch reach-bonus inserters without pulling in unrelated ones in normal play.
+* **Ground items (`item-entity`) are the one remaining unimplemented piece of the original item-tracking scope** - what a container/corpse/belt/inserter holds is all covered; a loose stack sitting directly on the ground is not. No confirmed API for reading an item-entity's stack was available when this was built.
 
 ## License
 
