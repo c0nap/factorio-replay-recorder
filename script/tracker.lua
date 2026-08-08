@@ -89,6 +89,16 @@ function Tracker.on_entity_died(event)
         storage.inventory_cache["vehicle_" .. entity.unit_number] = nil
     end
 
+    if entity.type == "unit" and entity.unit_number then
+        -- on_unit_removed_from_group isn't guaranteed to fire on death (as
+        -- opposed to a unit leaving a group while still alive), so this is
+        -- cleared explicitly here too - otherwise storage.unit_group_membership
+        -- leaks one entry per biter/spitter that ever died in a group, forever.
+        -- (Lua errors on assigning through a nil key, not just no-ops, so the
+        -- unit_number check guards that too.)
+        storage.unit_group_membership[entity.unit_number] = nil
+    end
+
     if not (in_zone or scoreable or Config.full_recording_mode()) then
         return
     end
@@ -195,12 +205,25 @@ local function vehicle_inventory_contents(entity)
     for _, slot in ipairs(slots) do
         local inv = entity.get_inventory(slot)
         if inv then
-            for name, count in pairs(inv.get_contents()) do
+            for name, count in pairs(TrackerEvents.flatten_contents(inv.get_contents())) do
                 contents[name] = (contents[name] or 0) + count
             end
         end
     end
     return contents
+end
+
+-- Ties a biter/spitter back to the attack/expansion party it belongs to,
+-- so a viewer can render the group as a single parented object.
+--
+-- There is no `unit_group` property on LuaEntity to read this back off the
+-- unit directly - group membership is only ever announced through the
+-- on_unit_added_to_group/on_unit_removed_from_group events (see
+-- TrackerEvents), which keep storage.unit_group_membership up to date.
+-- This just reads that record.
+local function unit_group_id(ent)
+    if ent.type ~= "unit" then return nil end
+    return storage.unit_group_membership[ent.unit_number]
 end
 
 local BELT_TYPES = {["transport-belt"] = true, ["underground-belt"] = true, ["splitter"] = true}
@@ -230,7 +253,7 @@ local function log_belt_contents(entities)
             local lines = {}
             for i = 1, ent.get_max_transport_line_index() do
                 local cache_key = ent.unit_number .. "_" .. i
-                local contents = ent.get_transport_line(i).get_contents()
+                local contents = TrackerEvents.flatten_contents(ent.get_transport_line(i).get_contents())
                 if not contents_equal(storage.belt_line_cache[cache_key], contents) then
                     table.insert(lines, {line = i, contents = contents})
                     storage.belt_line_cache[cache_key] = contents
@@ -268,10 +291,7 @@ function Tracker.tick()
                     force = ent.force.name,
                     position = ent.position,
                     orientation = ent.orientation,
-                    -- Ties biters/spitters back to the attack/expansion
-                    -- party they belong to, so a viewer can render the
-                    -- group as a single parented object.
-                    group_id = ent.unit_group and ent.unit_group.valid and ent.unit_group.group_number or nil,
+                    group_id = unit_group_id(ent),
                 }
                 table.insert(mobile_data, record)
 

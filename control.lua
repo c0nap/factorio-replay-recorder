@@ -28,6 +28,8 @@ script.on_event(defines.events.on_player_gun_inventory_changed, TrackerEvents.on
 
 -- AI Group Hooks
 script.on_event(defines.events.on_unit_group_created, TrackerEvents.on_unit_group_created)
+script.on_event(defines.events.on_unit_added_to_group, TrackerEvents.on_unit_added_to_group)
+script.on_event(defines.events.on_unit_removed_from_group, TrackerEvents.on_unit_removed_from_group)
 
 -- Full Recording Mode: every newly generated chunk is activated immediately
 -- rather than waiting for combat, and flipping the setting on mid-game

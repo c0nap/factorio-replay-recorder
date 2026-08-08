@@ -13,6 +13,12 @@ local function ensure_storage()
     storage.inventory_cache = storage.inventory_cache or {}
     storage.stats = storage.stats or {deaths = {}, kills = {}}
 
+    -- unit_number -> group's unique_id, kept up to date by
+    -- TrackerEvents.on_unit_added_to_group/on_unit_removed_from_group.
+    -- There's no property to read a unit's current group back off the
+    -- entity itself, so this is this mod's own record of it.
+    storage.unit_group_membership = storage.unit_group_membership or {}
+
     -- Was written every time a biter unit group formed but never actually
     -- read back anywhere; dropping it stops it from growing forever across
     -- a long save. Explicitly cleared here so saves from before this fix
