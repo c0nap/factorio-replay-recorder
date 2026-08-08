@@ -11,6 +11,7 @@ local Tracker = require("script.tracker")
 local TrackerEvents = require("script.tracker_events")
 local Logistics = require("script.logistics")
 local ItemChains = require("script.item_chains")
+local FluidChains = require("script.fluid_chains")
 local Init = require("script.init")
 local Config = require("script.config")
 
@@ -71,6 +72,7 @@ script.on_event(defines.events.on_tick, function()
     if game.tick % Config.distant_sample_interval_ticks() == 0 then
         Logistics.tick(storage.active_zones, CombatZones.is_zone_active, CombatZones.chunk_area)
         ItemChains.tick(storage.active_zones, CombatZones.is_zone_active, CombatZones.chunk_area)
+        FluidChains.tick(storage.active_zones, CombatZones.chunk_area)
     end
 
     if game.tick % FLUSH_INTERVAL_TICKS == 0 then
