@@ -101,7 +101,7 @@ function TrackerEvents.on_unit_group_created(event)
     if not group or not group.valid then return end
 
     Exporter.log_event(game.tick, "unit_group_created", {
-        group_id = group.group_number,
+        group_id = group.unique_id,
         force = group.force.name,
         position = group.position,
         state = GROUP_STATE_NAMES[group.state] or "unknown"
@@ -113,9 +113,15 @@ end
 -- storage.unit_group_membership is this mod's own record of "which group
 -- is this unit currently in", kept up to date here and read back in
 -- Tracker.tick() to tag each biter/spitter with its group_id.
+--
+-- `group` here is a LuaCommandable, not a dedicated "unit group" class -
+-- there's no `group_number` field on it (that was another wrong guess,
+-- caught before it shipped a crash: LuaCommandable's actual identifier
+-- field is `unique_id`).
 function TrackerEvents.on_unit_added_to_group(event)
     if not event.unit or not event.unit.valid then return end
-    storage.unit_group_membership[event.unit.unit_number] = event.group.group_number
+    if not event.group or not event.group.valid then return end
+    storage.unit_group_membership[event.unit.unit_number] = event.group.unique_id
 end
 
 function TrackerEvents.on_unit_removed_from_group(event)
