@@ -1,9 +1,9 @@
 -- script/tracker_events.lua
 -- Handles things that are naturally "events" rather than per-tick state:
--- inventory changes, biter unit groups forming up, and which group each
--- unit currently belongs to. Recording these as diffs/one-shot events
--- (instead of re-dumping a full inventory or group roster every tick) is
--- what keeps the replay file small.
+-- inventory changes, biter unit groups forming up, which group each unit
+-- currently belongs to, and which spawner a unit came from. Recording
+-- these as diffs/one-shot events (instead of re-dumping a full inventory
+-- or group roster every tick) is what keeps the replay file small.
 local Exporter = require("script.exporter")
 
 local TrackerEvents = {}
@@ -127,6 +127,18 @@ end
 function TrackerEvents.on_unit_removed_from_group(event)
     if not event.unit or not event.unit.valid then return end
     storage.unit_group_membership[event.unit.unit_number] = nil
+end
+
+-- Ties a freshly spawned biter/spitter back to the specific spawner that
+-- made it, giving nest lineage that's precise (an actual parent-child
+-- link from the engine) rather than the proximity guess chunk snapshots
+-- use to cluster spawners into rough "bases". Read back in Tracker.tick()
+-- as each unit's spawner_id.
+function TrackerEvents.on_entity_spawned(event)
+    local entity, spawner = event.entity, event.spawner
+    if not entity or not entity.valid then return end
+    if not spawner or not spawner.valid then return end
+    storage.spawned_by[entity.unit_number] = spawner.unit_number
 end
 
 return TrackerEvents

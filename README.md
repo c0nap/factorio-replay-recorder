@@ -16,8 +16,8 @@ This data is designed to be ingested by standalone desktop visualizers, allowing
 * **Smart Spatial Cropping:** Recording only turns on for a chunk once a player (on foot, driving, or piloting a vehicle) is actually within range of a fight there. Idle bases and biters that never see a player are never recorded.
 * **Sports-Style Scoring:** Player and vehicle deaths are logged as `score_update` events, with a running per-force death count - think of it as the "goal" in a sports replay. `player_respawn` marks the moment play resumes.
 * **Environmental Context:** The first time a chunk becomes relevant, its tiles (water, landfill, concrete, ...) and every building on it (walls, every turret type, nests, and anything else standing there) are dumped once, so a viewer can render the battlefield without re-recording it on every subsequent skirmish.
-* **Event-Driven Tracking:** Projectile/stream impacts, fire and acid patches expiring, inventory changes, and belt contents are all recorded as diffs or one-shot events rather than by polling everything every tick.
-* **AI Grouping:** Nests captured in a snapshot are clustered into rough "bases" by proximity, and biters/spitters report the `unit_group` they belong to, so a viewer can render an attack or expansion party as one object.
+* **Event-Driven Tracking:** Projectile/stream impacts, fire and acid patches appearing and expiring, inventory changes, and belt contents are all recorded as diffs or one-shot events rather than by polling everything every tick.
+* **AI Grouping:** Nests captured in a snapshot are clustered into rough "bases" by proximity; biters/spitters report the `unit_group` they belong to and, individually, the specific spawner they hatched from, so a viewer can render an attack/expansion party or a nest's offspring as one object.
 * **Mod-Agnostic:** Nothing is matched by hardcoded entity name. Combat detection is wired up for every projectile/stream prototype in the data stage, and building capture works by *excluding* known mobile/decorative entity types rather than matching an allow-list - a mod's new biter, turret, or building shows up automatically.
 * **Full Recording Mode:** A settings toggle to disable cropping entirely and record every chunk, every tick, for when you need everything and not just combat. It produces very large files - see [Settings](#settings) below.
 
@@ -40,14 +40,15 @@ Data is exported to Factorio's `script-output/replay.json` as newline-delimited 
 | `type` | Fired when | `data` contains |
 |---|---|---|
 | `chunk_snapshot` | A chunk records for the first time | `tiles`, `statics` (every building/turret/wall/nest, tagged `is_defense` for turrets/walls/gates and grouped into nest `cluster`s) |
-| `mobile_positions` | Every tick a zone is active | Position/orientation of every unit, character, vehicle, and bot in the zone, tagged with `group_id` if part of a unit group |
-| `death_event` | Any tracked entity dies | Victim (with `hostile_kind`/`hostile_size` for biters/spitters/worms/spawners) and killer, if any |
+| `mobile_positions` | Every tick a zone is active | Position/orientation of every unit, character, vehicle, wagon, and bot in the zone, tagged with `group_id` if part of a unit group and `spawner_id` for a biter/spitter's originating nest |
+| `death_event` | Any tracked entity dies | Victim (with `hostile_kind`/`hostile_size` for biters/spitters/worms/spawners), killer if any, and `loot` (items dropped) when non-empty |
 | `score_update` | A player or a manned/piloted vehicle dies | Force, killer, and that force's running death count |
 | `player_respawn` | A player respawns after dying | Player index and new position - the "goal reset" marker |
-| `damage_event` | A turret, wall, gate, character, or vehicle takes damage | Target, damage amount, dealer |
+| `damage_event` | A turret, wall, gate, character, vehicle, locomotive, or artillery wagon takes damage | Target, damage amount, `dealer` (who's responsible) and `dealt_by` (the specific projectile/flame/beam that hit) |
 | `projectile_impact` | A tracked projectile/stream hits something | Weapon name, source, target position/entity |
+| `effect_created` | A fire/acid patch is created (a spitter's acid, a flamethrower, ...) | Name, position, source entity if known |
 | `effect_expired` | A fire/acid patch fades out on its own | Name, position |
-| `inventory_delta` | A player's or vehicle's inventory changes | Owner, owner kind, list of `{item, delta}` changes |
+| `inventory_delta` | A player's or vehicle's (car/spidertron/cargo-wagon/artillery-wagon) inventory changes | Owner, owner kind, list of `{item, delta}` changes |
 | `belt_contents` | A belt's contents change while in an active zone | Per-line item counts, only for lines that changed |
 | `unit_group_created` | A biter/spitter group forms up | Group id, force, position, human-readable state (`gathering`, `attacking_target`, ...) |
 | `zone_expired` | A chunk stops recording after its timeout | Chunk id |

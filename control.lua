@@ -19,6 +19,7 @@ script.on_configuration_changed(Init.on_configuration_changed)
 script.on_event(defines.events.on_entity_died, Tracker.on_entity_died)
 script.on_event(defines.events.on_entity_damaged, Tracker.on_entity_damaged)
 script.on_event(defines.events.on_script_trigger_effect, Tracker.on_script_trigger_effect)
+script.on_event(defines.events.on_trigger_created_entity, Tracker.on_trigger_created_entity)
 script.on_event(defines.events.on_player_respawned, Tracker.on_player_respawned)
 
 -- Inventory Hooks
@@ -26,10 +27,11 @@ script.on_event(defines.events.on_player_main_inventory_changed, TrackerEvents.o
 script.on_event(defines.events.on_player_ammo_inventory_changed, TrackerEvents.on_player_inventory_changed)
 script.on_event(defines.events.on_player_gun_inventory_changed, TrackerEvents.on_player_inventory_changed)
 
--- AI Group Hooks
+-- AI Group & Spawning Hooks
 script.on_event(defines.events.on_unit_group_created, TrackerEvents.on_unit_group_created)
 script.on_event(defines.events.on_unit_added_to_group, TrackerEvents.on_unit_added_to_group)
 script.on_event(defines.events.on_unit_removed_from_group, TrackerEvents.on_unit_removed_from_group)
+script.on_event(defines.events.on_entity_spawned, TrackerEvents.on_entity_spawned)
 
 -- Full Recording Mode: every newly generated chunk is activated immediately
 -- rather than waiting for combat, and flipping the setting on mid-game

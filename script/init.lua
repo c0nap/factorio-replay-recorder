@@ -19,6 +19,12 @@ local function ensure_storage()
     -- entity itself, so this is this mod's own record of it.
     storage.unit_group_membership = storage.unit_group_membership or {}
 
+    -- unit_number -> spawner's unit_number, kept up to date by
+    -- TrackerEvents.on_entity_spawned. Gives precise nest lineage for a
+    -- biter/spitter, on top of the rough proximity-based clustering chunk
+    -- snapshots use to group spawners into "bases".
+    storage.spawned_by = storage.spawned_by or {}
+
     -- Was written every time a biter unit group formed but never actually
     -- read back anywhere; dropping it stops it from growing forever across
     -- a long save. Explicitly cleared here so saves from before this fix

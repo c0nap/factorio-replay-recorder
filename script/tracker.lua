@@ -61,6 +61,12 @@ function Tracker.on_entity_died(event)
     local killer_data = nil
     if cause and cause.valid then
         killer_data = {name = cause.name, type = cause.type, force = cause.force.name}
+    elseif event.force then
+        -- No specific killer entity available (e.g. it died/despawned
+        -- before this event ran), but the event can still carry which
+        -- force did the killing - worth keeping rather than dropping the
+        -- attribution entirely.
+        killer_data = {force = event.force.name}
     end
 
     local scoreable = is_scoreable_kind(entity.type) and entity.force.name ~= "enemy"
@@ -97,11 +103,19 @@ function Tracker.on_entity_died(event)
         -- (Lua errors on assigning through a nil key, not just no-ops, so the
         -- unit_number check guards that too.)
         storage.unit_group_membership[entity.unit_number] = nil
+        storage.spawned_by[entity.unit_number] = nil
     end
 
     if not (in_zone or scoreable or Config.full_recording_mode()) then
         return
     end
+
+    -- Every death carries a `loot` inventory (what it drops) - usually
+    -- empty for a plain biter, but meaningful for a player or vehicle
+    -- losing their held items in a fight. Only included when non-empty to
+    -- avoid padding every single death_event with an empty object.
+    local loot = event.loot and TrackerEvents.flatten_contents(event.loot.get_contents())
+    if loot and not next(loot) then loot = nil end
 
     Exporter.log_event(game.tick, "death_event", {
         victim = {
@@ -112,7 +126,8 @@ function Tracker.on_entity_died(event)
             hostile_kind = kind,
             hostile_size = size,
         },
-        killer = killer_data
+        killer = killer_data,
+        loot = loot,
     })
 end
 
@@ -160,6 +175,27 @@ function Tracker.on_script_trigger_effect(event)
     })
 end
 
+-- The other half of "an acid entity loses potency and fades away" from
+-- the design doc: on_entity_died's "fire" branch above already covers the
+-- fade-out, this covers the creation ("a spitter shoots acid at a tile"),
+-- so a viewer sees the full lifetime of a fire/acid patch instead of just
+-- its end.
+function Tracker.on_trigger_created_entity(event)
+    local entity = event.entity
+    if not entity or not entity.valid then return end
+    if entity.type ~= "fire" then return end
+
+    local in_zone = CombatZones.notify_and_check(entity.surface, entity.position)
+    if not (in_zone or Config.full_recording_mode()) then return end
+
+    local source = event.source
+    Exporter.log_event(game.tick, "effect_created", {
+        name = entity.name,
+        position = entity.position,
+        source = (source and source.valid) and source.name or nil
+    })
+end
+
 local DAMAGE_TRACKED_TYPES = {
     ["turret"] = true,
     ["ammo-turret"] = true,
@@ -170,6 +206,8 @@ local DAMAGE_TRACKED_TYPES = {
     ["character"] = true,
     ["car"] = true,
     ["spider-vehicle"] = true,
+    ["locomotive"] = true,
+    ["artillery-wagon"] = true,
 }
 
 function Tracker.on_entity_damaged(event)
@@ -180,26 +218,41 @@ function Tracker.on_entity_damaged(event)
     local in_zone = CombatZones.notify_and_check(entity.surface, entity.position)
     if not (in_zone or Config.full_recording_mode()) then return end
 
+    -- `cause` is who's responsible (the character/turret/biter that pulled
+    -- the trigger); `source` is what's literally dealing the damage right
+    -- now (the projectile/flame/sticker/laser beam it fired). Keeping both
+    -- gives a viewer the full chain instead of just "something hit this".
     Exporter.log_event(game.tick, "damage_event", {
         target = entity.name,
         target_type = entity.type,
         position = entity.position,
         damage = event.final_damage_amount,
-        dealer = event.cause and event.cause.name or "unknown"
+        dealer = event.cause and event.cause.name or "unknown",
+        dealt_by = event.source and event.source.name or nil,
     })
 end
 
--- Combined trunk + ammo (+ trash, for spiders/tanks) contents for a
--- vehicle. There's no on_*_inventory_changed event for vehicles the way
--- there is for players, so this is diffed once per tick while the vehicle
--- is inside an active zone (see Tracker.tick), never map-wide.
+-- Which inventory slots to combine per vehicle type, confirmed against the
+-- real defines.inventory list (car_trash and the wagon inventories were
+-- previously missed - cars/tanks were undercounting their own trash slot,
+-- and cargo/artillery wagons weren't tracked at all despite trains being
+-- explicitly a "combat vehicle" per the design doc). fluid-wagon has no
+-- item inventory - fluids aren't part of this mod's item-based inventory
+-- tracking, so it's deliberately absent here and only gets position
+-- tracking via mobile_positions.
+local VEHICLE_INVENTORY_SLOTS = {
+    ["car"] = {defines.inventory.car_trunk, defines.inventory.car_ammo, defines.inventory.car_trash},
+    ["spider-vehicle"] = {defines.inventory.spider_trunk, defines.inventory.spider_ammo, defines.inventory.spider_trash},
+    ["cargo-wagon"] = {defines.inventory.cargo_wagon},
+    ["artillery-wagon"] = {defines.inventory.artillery_wagon_ammo},
+}
+
+-- There's no on_*_inventory_changed event for vehicles the way there is
+-- for players, so this is diffed once per tick while the vehicle is
+-- inside an active zone (see Tracker.tick), never map-wide.
 local function vehicle_inventory_contents(entity)
-    local slots
-    if entity.type == "car" then
-        slots = {defines.inventory.car_trunk, defines.inventory.car_ammo}
-    else
-        slots = {defines.inventory.spider_trunk, defines.inventory.spider_ammo, defines.inventory.spider_trash}
-    end
+    local slots = VEHICLE_INVENTORY_SLOTS[entity.type]
+    if not slots then return {} end
 
     local contents = {}
     for _, slot in ipairs(slots) do
@@ -279,6 +332,7 @@ function Tracker.tick()
         local entities = zone.surface.find_entities_filtered{
             area = area,
             type = {"unit", "character", "car", "spider-vehicle", "locomotive",
+                    "cargo-wagon", "fluid-wagon", "artillery-wagon",
                     "combat-robot", "construction-robot", "logistic-robot"}
         }
 
@@ -292,10 +346,11 @@ function Tracker.tick()
                     position = ent.position,
                     orientation = ent.orientation,
                     group_id = unit_group_id(ent),
+                    spawner_id = storage.spawned_by[ent.unit_number],
                 }
                 table.insert(mobile_data, record)
 
-                if ent.type == "car" or ent.type == "spider-vehicle" then
+                if VEHICLE_INVENTORY_SLOTS[ent.type] then
                     TrackerEvents.log_inventory_delta("vehicle_" .. ent.unit_number, "vehicle", vehicle_inventory_contents(ent))
                 end
             end
