@@ -1,8 +1,9 @@
 -- script/tracker_events.lua
 -- Handles things that are naturally "events" rather than per-tick state:
--- inventory changes and biter unit groups forming up. Recording these as
--- diffs/one-shot events (instead of re-dumping a full inventory or group
--- roster every tick) is what keeps the replay file small.
+-- inventory changes, biter unit groups forming up, and which group each
+-- unit currently belongs to. Recording these as diffs/one-shot events
+-- (instead of re-dumping a full inventory or group roster every tick) is
+-- what keeps the replay file small.
 local Exporter = require("script.exporter")
 
 local TrackerEvents = {}
@@ -99,16 +100,27 @@ function TrackerEvents.on_unit_group_created(event)
     local group = event.group
     if not group or not group.valid then return end
 
-    -- Group membership itself is looked up live from each unit's own
-    -- unit_group field when it's recorded (see Tracker.tick), so nothing
-    -- needs to be cached here - this is purely a one-shot "a group formed"
-    -- event.
     Exporter.log_event(game.tick, "unit_group_created", {
         group_id = group.group_number,
         force = group.force.name,
         position = group.position,
         state = GROUP_STATE_NAMES[group.state] or "unknown"
     })
+end
+
+-- There is no `unit.unit_group` property to read a unit's group back off
+-- of - group membership is only ever announced through these two events.
+-- storage.unit_group_membership is this mod's own record of "which group
+-- is this unit currently in", kept up to date here and read back in
+-- Tracker.tick() to tag each biter/spitter with its group_id.
+function TrackerEvents.on_unit_added_to_group(event)
+    if not event.unit or not event.unit.valid then return end
+    storage.unit_group_membership[event.unit.unit_number] = event.group.group_number
+end
+
+function TrackerEvents.on_unit_removed_from_group(event)
+    if not event.unit or not event.unit.valid then return end
+    storage.unit_group_membership[event.unit.unit_number] = nil
 end
 
 return TrackerEvents

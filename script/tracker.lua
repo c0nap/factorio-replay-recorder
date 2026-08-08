@@ -89,6 +89,16 @@ function Tracker.on_entity_died(event)
         storage.inventory_cache["vehicle_" .. entity.unit_number] = nil
     end
 
+    if entity.type == "unit" and entity.unit_number then
+        -- on_unit_removed_from_group isn't guaranteed to fire on death (as
+        -- opposed to a unit leaving a group while still alive), so this is
+        -- cleared explicitly here too - otherwise storage.unit_group_membership
+        -- leaks one entry per biter/spitter that ever died in a group, forever.
+        -- (Lua errors on assigning through a nil key, not just no-ops, so the
+        -- unit_number check guards that too.)
+        storage.unit_group_membership[entity.unit_number] = nil
+    end
+
     if not (in_zone or scoreable or Config.full_recording_mode()) then
         return
     end
@@ -206,23 +216,14 @@ end
 -- Ties a biter/spitter back to the attack/expansion party it belongs to,
 -- so a viewer can render the group as a single parented object.
 --
--- `unit_group` is only meant to be a valid key on "unit"-type entities
--- (biters/spitters) - reading it on a character/car/robot/etc. throws
--- "LuaEntity doesn't contain key unit_group" instead of returning nil.
--- A `type == "unit"` guard alone turned out not to be reliable either:
--- it still throws the same error for *some* unit-type entities depending
--- on internal engine state (observed in practice; not something this mod
--- can predict from the outside - e.g. units are known to not expose their
--- group around on_entity_died). Rather than chase the exact rule, this is
--- wrapped in pcall so any entity/state combination that doesn't support
--- the key is treated as "not in a group" instead of crashing the mod.
+-- There is no `unit_group` property on LuaEntity to read this back off the
+-- unit directly - group membership is only ever announced through the
+-- on_unit_added_to_group/on_unit_removed_from_group events (see
+-- TrackerEvents), which keep storage.unit_group_membership up to date.
+-- This just reads that record.
 local function unit_group_id(ent)
     if ent.type ~= "unit" then return nil end
-
-    local ok, group = pcall(function() return ent.unit_group end)
-    if not ok or not group or not group.valid then return nil end
-
-    return group.group_number
+    return storage.unit_group_membership[ent.unit_number]
 end
 
 local BELT_TYPES = {["transport-belt"] = true, ["underground-belt"] = true, ["splitter"] = true}
