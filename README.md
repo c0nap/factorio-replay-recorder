@@ -23,7 +23,7 @@ This data is designed to be ingested by standalone desktop visualizers, allowing
 * **Physical Item Tracking:** Containers, corpses, and inserter hands physically inside a zone are diffed every tick, the same way belts already were - chests, what's mid-transfer, and what a fallen player dropped are all part of "immediately here on the battlefield." A player's corpse also gets a one-time `corpse_created` record (who died, when, and to what) and a `corpse_expired` record once it's gone, so a viewer can show "this is Alice's corpse from tick 41200" rather than just an anonymous chest-like object.
 * **Long-Distance Supply Chains:** Belts and inserters are followed outward from a zone - well past its chunk boundary - via belt-to-belt connections and inserter pickup/drop targets. Close hops get tracked precisely; distant hops are rolled up into a compact "roughly this many of this item, this direction from the fight" summary instead of one event per far-off entity, so a huge buffer chest 40 belts away shows up as one line, not forty.
 * **Fluid Chains:** Pipes, storage tanks, pumps, and flamethrower turret fuel are tracked the same way, following the pipe network's own internal "fluid segments" - each connected run of pipe is read and reported once, however long it is, not once per pipe.
-* **Ground Items:** Loose item stacks lying on the ground (`item-entity`) inside an active zone are diffed every tick just like a chest, via the `.stack` property `ItemEntity` types expose. A player manually dropping one also gets a one-time `ground_item_created` provenance record (who dropped it, when, where) - the same `corpse_created`/`corpse_expired` pattern used for player corpses.
+* **Ground Items:** Loose item stacks lying on the ground (`item-entity`) inside an active zone are diffed every tick just like a chest, via the `.stack` property `ItemEntity` types expose. A player manually dropping one also gets a one-time `ground_item_created` provenance record (who dropped it, when, where), and a `ground_item_removed` record once it's gone - picked up, mined, or destroyed, tracked via `register_on_object_destroyed` regardless of which.
 * **Item Motion Is Implicit:** There's no separate "item moved" event - an item owned by a player, vehicle, or robot is tracked under that owner's `inventory_delta`, and that owner's position is tracked every tick via `mobile_positions`. Cross-referencing the two (by `owner`/`id`) tells a viewer where those items physically are at any moment, including while their owner is moving.
 * **Full Recording Mode:** A settings toggle to disable cropping entirely and record every chunk, every tick, for when you need everything and not just combat. It produces very large files - see [Settings](#settings) below.
 
@@ -67,6 +67,7 @@ Data is exported to Factorio's `script-output/replay.json` as newline-delimited 
 | `corpse_created` | A player character dies and their corpse appears | `owner` (`corpse_<id>`, the same key its `inventory_delta`/`corpse_expired` events use), position, `player_index`/`player_name`, `death_tick`, and `killer` |
 | `corpse_expired` | A player corpse times out or is fully looted | `owner` (`corpse_<id>`) |
 | `ground_item_created` | A player manually drops an item on the ground | `owner` (`ground_item_<id>`, the same key its `inventory_delta` uses), position, `player_index` |
+| `ground_item_removed` | A tracked ground item is picked up, mined, or destroyed | `owner` (`ground_item_<id>`) |
 | `zone_expired` | A chunk stops recording after its timeout | Chunk id |
 
 **Cross-referencing item location and motion:** there's no dedicated "item moved" event. An item owned by a player, vehicle, or robot shows up under that owner's `inventory_delta` (`owner_kind` = `player`/`vehicle`/`robot`), and that same owner's position is in every `mobile_positions` update (matched by `id`/`owner`). To know where a player's ammo physically is at tick T, look up their position in `mobile_positions` at T - the two streams are deliberately kept separate (position every tick is cheap and needed for combat rendering regardless of inventory; inventory only needs to be emitted when it actually changes) rather than duplicating position onto every item event.
@@ -107,12 +108,6 @@ isn't something a headless CI job can easily stand in for. Instead:
   ```
   python3 tools/inspect_replay.py
   ```
-
-## Known Limitations
-
-Documented here rather than left for someone to discover and assume is a bug.
-
-* **A ground item picked up by walking over it doesn't get its cache entry cleaned up.** An item-entity *destroyed* (fire, explosion) fires `on_entity_died` like any other entity and is cleaned up the same way vehicles/containers/robots/inserters are (see `CACHE_CLEANUP_PREFIX` in `script/tracker.lua`) - but there's no confirmed event carrying an entity reference for the "picked up by walking over it" removal path (`on_picked_up_item` only carries `item_stack`/`player_index`, no entity), so that specific removal path can leave a stale `storage.inventory_cache["ground_item_"..id]` entry behind. `LuaBootstrap::register_on_object_destroyed`/`on_object_destroyed` looks like the right generic mechanism (register the entity when first seen, get notified by registration number regardless of *why* it was removed) but isn't confirmed API territory yet - not implemented until it is.
 
 ## License
 
