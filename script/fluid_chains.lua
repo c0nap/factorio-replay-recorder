@@ -34,6 +34,7 @@
 -- happens to have, so a pump's two independent sides can never be merged
 -- into one reported segment.
 local TrackerEvents = require("script.tracker_events")
+local Config = require("script.config")
 
 local FluidChains = {}
 
@@ -139,13 +140,37 @@ local function process_zone(surface, area, visited_boxes, reported)
     end
 end
 
+-- Unlike Logistics.tick()/ItemChains.tick(), fluids have no Tier 1
+-- per-tick equivalent anywhere in Tracker.tick() - this is the only
+-- place fluid_delta ever comes from, so it can't just be skipped under
+-- full recording mode the way those two effectively are (they become
+-- no-ops once storage.active_zones stops being populated per-chunk - see
+-- CombatZones.activate_full_recording_chunk - since everything they'd
+-- otherwise report is already covered by Tracker.tick()'s whole-surface
+-- scan). Fluids still need an explicit whole-surface seed search here to
+-- keep working at all once that population stops.
 function FluidChains.tick(active_zones, chunk_area_fn)
     local visited_boxes = {}
     local reported = {}
 
-    for zone_id, zone in pairs(active_zones) do
-        local area = chunk_area_fn(zone.chunk_x, zone.chunk_y)
-        process_zone(zone.surface, area, visited_boxes, reported)
+    if Config.full_recording_mode() then
+        -- game.surfaces is indexed by both numeric index and name, both
+        -- pointing at the same LuaSurface - dedupe by surface.index so
+        -- this doesn't scan every surface twice (visited_boxes/reported
+        -- would prevent duplicate fluid_delta output either way, but
+        -- there's no reason to pay for the redundant scan itself).
+        local seen = {}
+        for _, surface in pairs(game.surfaces) do
+            if not seen[surface.index] then
+                seen[surface.index] = true
+                process_zone(surface, nil, visited_boxes, reported)
+            end
+        end
+    else
+        for zone_id, zone in pairs(active_zones) do
+            local area = chunk_area_fn(zone.chunk_x, zone.chunk_y)
+            process_zone(zone.surface, area, visited_boxes, reported)
+        end
     end
 end
 

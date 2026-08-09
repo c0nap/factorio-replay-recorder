@@ -76,7 +76,13 @@ function CombatZones.is_player_nearby(surface, position, radius)
     return false
 end
 
+-- Under full recording mode every generated chunk is conceptually
+-- "active" without exception - short-circuiting here means callers never
+-- need to consult storage.active_zones (which full recording mode no
+-- longer populates at all - see activate_full_recording_chunk) to find
+-- that out.
 function CombatZones.is_zone_active(surface, position)
+    if Config.full_recording_mode() then return true end
     local cx, cy = chunk_of(position)
     return storage.active_zones[chunk_id(surface, cx, cy)] ~= nil
 end
@@ -212,38 +218,35 @@ local function dump_static_chunk_data(surface, chunk_x, chunk_y)
     })
 end
 
-local function activate_zone(surface, chunk_x, chunk_y, permanent)
+-- Dumps a chunk's one-time static data if it hasn't been recorded yet.
+-- Shared by both combat-triggered zone activation and full recording
+-- mode - a chunk's statics/tiles/logistics roster only ever need
+-- capturing once, regardless of which path first made it "known".
+local function ensure_known(surface, chunk_x, chunk_y)
     local id = chunk_id(surface, chunk_x, chunk_y)
-
-    -- Only dump the (potentially large) static snapshot the first time a
-    -- chunk becomes relevant. Per the design goal, once we've captured a
-    -- battlefield's terrain and buildings we don't need to re-record them
-    -- every time the fight there flares back up.
     if not storage.known_chunks[id] then
         dump_static_chunk_data(surface, chunk_x, chunk_y)
         storage.known_chunks[id] = true
     end
+end
+
+local function activate_zone(surface, chunk_x, chunk_y)
+    local id = chunk_id(surface, chunk_x, chunk_y)
+    ensure_known(surface, chunk_x, chunk_y)
 
     storage.active_zones[id] = {
         surface = surface,
         chunk_x = chunk_x,
         chunk_y = chunk_y,
-        -- `permanent` zones (full recording mode) never expire on their
-        -- own; everything else times out `zone_timeout_ticks` after the
-        -- last thing that happened in it. Using a flag instead of an
-        -- infinite expires_at keeps the stored value a normal finite
-        -- number (the save format has no business holding onto inf/NaN)
-        -- and makes the "never expires" case explicit rather than
-        -- implicit in a magic number.
-        permanent = permanent or nil,
-        expires_at = permanent and nil or (game.tick + Config.zone_timeout_ticks())
+        expires_at = game.tick + Config.zone_timeout_ticks()
     }
 end
 
 -- Called whenever something combat-relevant happens (a hit, a death, a
 -- projectile impact). Only actually opens/extends a recording zone if a
 -- player is nearby, unless full recording mode is on, in which case every
--- chunk is already permanently active and this is a no-op.
+-- chunk is already covered by Tracker.tick()'s whole-surface scan and
+-- this is a no-op.
 function CombatZones.trigger_combat_at(surface, position)
     if Config.full_recording_mode() then return end
 
@@ -252,28 +255,56 @@ function CombatZones.trigger_combat_at(surface, position)
     end
 
     local cx, cy = chunk_of(position)
-    activate_zone(surface, cx, cy, false)
+    activate_zone(surface, cx, cy)
 end
 
--- Marks a single chunk as active forever (used by full recording mode,
--- where cropping is disabled entirely and every generated chunk records).
+-- Marks a chunk as known (dumping its one-time static data if that
+-- hasn't happened yet) for full recording mode - deliberately does NOT
+-- add an storage.active_zones entry the way combat-triggered activation
+-- does. A save can easily have thousands of generated chunks; giving
+-- each one its own permanent active_zones entry meant Tracker.tick()
+-- (and, before this, Logistics/ItemChains/FluidChains.tick()) had to
+-- issue several find_entities_filtered calls PER CHUNK, EVERY TICK -
+-- fine for the handful of zones combat cropping keeps active, but with
+-- a few hundred+ chunks that's enough engine-call overhead alone to
+-- freeze the game, even with nothing physically happening in most of
+-- them. Under full recording mode there's no cropping happening anyway
+-- (is_zone_active() above already returns true unconditionally), so
+-- there's nothing an active_zones entry would add other than that
+-- per-chunk iteration cost - Tracker.tick()/FluidChains.tick() scan
+-- each whole surface in one shot instead (see their full_recording_mode
+-- branches), and Logistics.tick()/ItemChains.tick() simply have nothing
+-- to iterate, which is correct: everything they'd otherwise report is
+-- already covered by that whole-surface scan.
 function CombatZones.activate_full_recording_chunk(surface, chunk_x, chunk_y)
-    activate_zone(surface, chunk_x, chunk_y, true)
+    ensure_known(surface, chunk_x, chunk_y)
 end
 
 function CombatZones.activate_all_existing_chunks()
+    -- game.surfaces is indexed by both numeric index and name, both
+    -- pointing at the same LuaSurface - dedupe by surface.index so this
+    -- doesn't walk every surface's chunks twice. ensure_known()'s
+    -- storage.known_chunks guard already made a duplicate pass harmless
+    -- output-wise, but there's no reason to pay for get_chunks() twice.
+    local seen = {}
     for _, surface in pairs(game.surfaces) do
-        for chunk in surface.get_chunks() do
-            CombatZones.activate_full_recording_chunk(surface, chunk.x, chunk.y)
+        if not seen[surface.index] then
+            seen[surface.index] = true
+            for chunk in surface.get_chunks() do
+                CombatZones.activate_full_recording_chunk(surface, chunk.x, chunk.y)
+            end
         end
     end
 end
 
--- Called when full recording mode is switched back off. Zones it opened
--- are marked `permanent` and have no expires_at, so without this they
--- would keep recording forever even after the user turned the crazy-file-
--- size mode back off. Give each one a normal timeout instead so it winds
--- down like any other zone.
+-- Called when full recording mode is switched back off. Full recording
+-- activation no longer creates `permanent` active_zones entries at all
+-- (see activate_full_recording_chunk), so this is normally a no-op now -
+-- it's kept purely as a backward-compat cleanup pass for saves that had
+-- full recording mode on under an older version of this mod, where such
+-- entries could still exist and would otherwise keep "recording" forever
+-- with no expires_at. Give any that turn up a normal timeout instead so
+-- they wind down like any other zone.
 function CombatZones.expire_permanent_zones()
     for _, zone in pairs(storage.active_zones) do
         if zone.permanent then
