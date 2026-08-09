@@ -48,6 +48,14 @@ local function ensure_storage()
     -- so this never holds more than one tick's worth of pending deaths.
     storage.pending_corpse_info = storage.pending_corpse_info or {}
 
+    -- unit_number -> true for every ground item-entity registered via
+    -- script.register_on_object_destroyed, so TrackerEvents.on_object_destroyed
+    -- (a global event covering every object ANY mod registers) knows which
+    -- destroyed entities are actually ours to clean up, and
+    -- ensure_ground_item_registered doesn't re-register one it's already
+    -- watching. Entries are removed once on_object_destroyed fires for them.
+    storage.registered_ground_items = storage.registered_ground_items or {}
+
     -- Was written every time a biter unit group formed but never actually
     -- read back anywhere; dropping it stops it from growing forever across
     -- a long save. Explicitly cleared here so saves from before this fix

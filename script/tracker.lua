@@ -46,7 +46,13 @@ end
 
 -- storage.inventory_cache key prefix per entity type whose owner_key is
 -- "<prefix><unit_number>" - used to clean up on death so a long-dead
--- entity's cache entry doesn't linger for the rest of the save.
+-- entity's cache entry doesn't linger for the rest of the save. item-entity
+-- is deliberately NOT here - on_entity_died only covers destruction (fire/
+-- explosion), not the far more common "picked up by walking over it" case,
+-- so ground items use the strictly more general
+-- register_on_object_destroyed/on_object_destroyed mechanism instead (see
+-- TrackerEvents.on_object_destroyed), which covers every removal cause in
+-- one place rather than needing two.
 local CACHE_CLEANUP_PREFIX = {
     ["car"] = "vehicle_",
     ["spider-vehicle"] = "vehicle_",
@@ -57,7 +63,6 @@ local CACHE_CLEANUP_PREFIX = {
     ["construction-robot"] = "robot_",
     ["logistic-robot"] = "robot_",
     ["inserter"] = "inserter_",
-    ["item-entity"] = "ground_item_",
 }
 
 function Tracker.on_entity_died(event)
@@ -391,6 +396,7 @@ local function scan_physical_items(surface, area)
                 -- Same "no other position channel" situation as corpses -
                 -- item-entities are dynamic (not in the static chunk dump)
                 -- and inventory_delta otherwise carries no position.
+                TrackerEvents.ensure_ground_item_registered(ent)
                 TrackerEvents.log_inventory_delta("ground_item_" .. ent.unit_number, "ground_item", TrackerEvents.ground_item_contents(ent), {position = ent.position})
             end
         end

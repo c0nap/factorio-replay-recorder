@@ -168,6 +168,39 @@ function TrackerEvents.ground_item_contents(entity)
     return {}
 end
 
+-- Registers a ground item-entity for on_object_destroyed, the one time we
+-- see it (storage.registered_ground_items guards against re-registering
+-- every tick it's re-scanned - register_on_object_destroyed is idempotent
+-- per its own docs, but there's no reason to call it repeatedly). This is
+-- what closes the gap on_entity_died couldn't: register_on_object_destroyed
+-- fires regardless of WHY the object was removed (picked up by walking
+-- over it, mined, burned, ...), not just combat destruction.
+function TrackerEvents.ensure_ground_item_registered(entity)
+    if not entity.unit_number or storage.registered_ground_items[entity.unit_number] then return end
+
+    local ok = pcall(function() script.register_on_object_destroyed(entity) end)
+    if ok then
+        storage.registered_ground_items[entity.unit_number] = true
+    end
+end
+
+-- Fires for ANY object this mod has registered via
+-- register_on_object_destroyed, regardless of mod or object type (the
+-- registry is global, per its docs) - so this only acts when the
+-- destroyed object is a LuaEntity (defines.target_type.entity) whose
+-- useful_id (== the entity's former unit_number for entity targets) is
+-- one we actually registered ourselves, via storage.registered_ground_items.
+-- Clears the cache entry (the actual fix for the leak) and emits a
+-- one-time ground_item_removed event, mirroring corpse_expired.
+function TrackerEvents.on_object_destroyed(event)
+    if event.type ~= defines.target_type.entity then return end
+    if not storage.registered_ground_items[event.useful_id] then return end
+
+    storage.registered_ground_items[event.useful_id] = nil
+    storage.inventory_cache["ground_item_" .. event.useful_id] = nil
+    Exporter.log_event(game.tick, "ground_item_removed", {owner = "ground_item_" .. event.useful_id})
+end
+
 local function belt_line_contents_equal(a, b)
     a, b = a or {}, b or {}
     for item, count in pairs(a) do
@@ -256,6 +289,7 @@ function TrackerEvents.on_player_dropped_item(event)
     local entity = event.entity
     if not entity or not entity.valid or not entity.unit_number then return end
 
+    TrackerEvents.ensure_ground_item_registered(entity)
     Exporter.log_event(game.tick, "ground_item_created", {
         owner = "ground_item_" .. entity.unit_number,
         position = entity.position,
