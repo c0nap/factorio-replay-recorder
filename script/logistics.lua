@@ -1,25 +1,36 @@
 -- script/logistics.lua
--- Captures "storage within logistic reach of the battlefield" (design
--- doc point 8): once per newly-touched chunk, finds every logistics
--- network whose construction (roboport) range reaches into that chunk,
--- and records the storage/provider/requester containers it owns, along
--- with their contents at that moment.
+-- "Storage within logistic reach of the battlefield" (design doc point 8),
+-- split into two parts that mirror the rest of the mod's near/far split:
 --
--- This is a one-time capture alongside the rest of the chunk snapshot,
--- not something diffed every tick like player/vehicle inventories. A
--- single logistics network can span an entire base, so continuously
--- tracking every container on it forever would work directly against the
--- "don't record what's far from the fight" goal the cropping system
--- exists for - a snapshot of what's reachable when the fight starts is
--- the intended scope here, not a live feed of the whole base's economy.
+-- - `Logistics.context_for_area` runs once per newly-touched chunk (from
+--   combat_zones.lua), and captures the STRUCTURAL ROSTER of a reachable
+--   network - which containers exist, where, in what role - as part of
+--   the one-time chunk_snapshot. No contents here; a roster doesn't go
+--   stale the way contents do.
+-- - `Logistics.tick` runs on a slow, configurable interval (see
+--   script/config.lua), and diffs the CONTENTS of containers belonging to
+--   networks that are both reachable from a currently active zone and
+--   have recently shown robot activity - the "eligibility" gating this
+--   needed, since a network's construction area reaching a zone doesn't
+--   mean it's actually doing anything right now (a powered-down roboport,
+--   or one with zero robots, has zero combat relevance despite being in
+--   range).
+--
+-- There used to be a flat cap (300 containers) on the one-time roster to
+-- bound file size. That's gone: a network reachable from the fight has
+-- combat relevance regardless of size, so capping it drops real
+-- information. Cost is bounded instead by NOT re-walking the whole
+-- network every tick (only once per sample interval) and by diffing
+-- contents (an unchanged container costs ~0 bytes between samples) -
+-- rate, not size.
 local TrackerEvents = require("script.tracker_events")
+local Config = require("script.config")
 
 local Logistics = {}
 
 -- LuaSurface.find_logistic_networks_by_construction_area takes a single
 -- point, not an area, so a chunk's roboport coverage is approximated by
--- sampling its corners and center - cheap since this only runs once, the
--- first time a chunk is snapshotted.
+-- sampling its corners and center.
 local function sample_points(area)
     local tl, br = area[1], area[2]
     local mid = {x = (tl.x + br.x) / 2, y = (tl.y + br.y) / 2}
@@ -45,32 +56,15 @@ local function find_networks(surface, area, force_names)
     return by_id
 end
 
--- Container-like entities (chests, both plain and logistic variants)
--- expose their contents through defines.inventory.chest. pcall-guarded
--- because a network's `requesters` aren't limited to chests - a player
--- character with personal logistics requests is itself a requester point
--- owner, and doesn't have a chest inventory to read.
-local function container_contents(entity)
-    local ok, inv = pcall(function() return entity.get_inventory(defines.inventory.chest) end)
-    if not ok or not inv then return nil end
-    local contents = TrackerEvents.flatten_contents(inv.get_contents())
-    return next(contents) and contents or nil
-end
-
--- Caps how many containers get recorded per chunk snapshot. A logistics
--- network can span an entire base; without a cap, one chunk touching a
--- large, fully-connected network could dump thousands of chests into a
--- single event. This is a deliberate, documented tradeoff in favor of
--- file size, not an oversight.
-local MAX_CONTAINERS = 300
-
 local ROLES_BY_FIELD = {storages = "storage", providers = "provider", requesters = "requester"}
 
--- Returns true if the cap was hit (list is incomplete).
+-- Roster only: which containers exist, where, in what role. No contents -
+-- those are read separately (via Tracker's per-tick physical scan if the
+-- container turns out to be physically inside a zone, or via
+-- Logistics.tick below if it's genuinely distant).
 local function collect_containers(network, out, seen)
     for field, role in pairs(ROLES_BY_FIELD) do
         for _, entity in ipairs(network[field]) do
-            if #out >= MAX_CONTAINERS then return true end
             -- A player character can itself own a requester point
             -- (personal logistics requests), but the player's inventory
             -- is already tracked separately and in more detail via
@@ -79,41 +73,119 @@ local function collect_containers(network, out, seen)
             if entity.valid and entity.type ~= "character" and not seen[entity.unit_number] then
                 seen[entity.unit_number] = true
                 table.insert(out, {
+                    unit_number = entity.unit_number,
                     name = entity.name,
                     position = entity.position,
                     role = role,
-                    contents = container_contents(entity),
                 })
             end
         end
     end
-    return false
 end
 
--- Returns an array of per-network summaries reachable from `area`, for
--- each force name in `force_names` (a set, {name = true}):
--- {network_id, force, available_logistic_robots,
---  available_construction_robots, containers, truncated?}
+-- One-time structural roster, called from combat_zones.lua's chunk
+-- snapshot. Returns an array of per-network summaries reachable from
+-- `area`, for each force name in `force_names` (a set, {name = true}):
+-- {network_id, force, robots_at_capture = {logistic_robots,
+-- construction_robots}, containers}. `robots_at_capture` is explicitly a
+-- one-time snapshot value, not authoritative afterward - the ongoing
+-- eligibility tracking in Logistics.tick is what's authoritative going
+-- forward.
 function Logistics.context_for_area(surface, area, force_names)
     local networks = find_networks(surface, area, force_names)
     local result = {}
 
     for _, network in pairs(networks) do
         local containers = {}
-        local seen = {}
-        local truncated = collect_containers(network, containers, seen)
+        collect_containers(network, containers, {})
 
         table.insert(result, {
             network_id = network.network_id,
             force = network.force.name,
-            available_logistic_robots = network.available_logistic_robots,
-            available_construction_robots = network.available_construction_robots,
+            robots_at_capture = {
+                logistic_robots = network.all_logistic_robots,
+                construction_robots = network.all_construction_robots,
+            },
             containers = containers,
-            truncated = truncated or nil,
         })
     end
 
     return result
+end
+
+-- Tier 2: for every logistics network reachable from a currently active
+-- zone that's shown recent robot activity, diff the contents of its
+-- containers - except ones physically inside an active zone right now,
+-- since Tracker.tick()'s per-tick physical scan already covers those.
+-- Takes CombatZones' is_zone_active/chunk_area as parameters rather than
+-- requiring script.combat_zones directly: combat_zones.lua already
+-- requires this module (for the one-time roster above), and Lua's
+-- require() doesn't handle circular requires safely, so the dependency
+-- only runs one way - this module never requires combat_zones.lua back.
+--
+-- `all_logistic_robots`/`all_construction_robots` (not `available_*`) is
+-- deliberate: `available_*` dips every time a bot is mid-delivery, which
+-- would make a busy, perfectly-active network flicker in and out of
+-- eligibility. `all_*` is total network membership and only changes when
+-- a bot is actually built or destroyed, so it doesn't flicker at all -
+-- no smoothing needed on top of it.
+function Logistics.tick(active_zones, is_zone_active, chunk_area_fn)
+    storage.active_networks = storage.active_networks or {}
+
+    -- 1. Sweep: drop networks that haven't shown activity within the
+    -- window. A network seen with 0 robots this pass simply isn't
+    -- refreshed below - it rides out its existing window instead of being
+    -- dropped instantly. That's the hysteresis.
+    for key, entry in pairs(storage.active_networks) do
+        if game.tick >= entry.expires_at then
+            storage.active_networks[key] = nil
+        end
+    end
+
+    -- 2. Re-sample every currently active zone's reachable networks, and
+    -- refresh the eligibility window for the ones still doing something.
+    local networks_this_tick = {}
+    for zone_id, zone in pairs(active_zones) do
+        local force_names = storage.chunk_force_names[zone_id]
+        if force_names then
+            local area = chunk_area_fn(zone.chunk_x, zone.chunk_y)
+            local found = find_networks(zone.surface, area, force_names)
+            for network_id, network in pairs(found) do
+                local key = zone.surface.name .. "_" .. network.force.name .. "_" .. network_id
+                networks_this_tick[key] = network
+
+                if (network.all_logistic_robots + network.all_construction_robots) > 0 then
+                    storage.active_networks[key] = {
+                        expires_at = game.tick + Config.network_activity_window_ticks()
+                    }
+                end
+            end
+        end
+    end
+
+    -- 3. For every network still eligible (post-sweep/refresh) that we
+    -- have a live reference for this tick, diff its non-physical
+    -- containers.
+    local seen = {}
+    for key in pairs(storage.active_networks) do
+        local network = networks_this_tick[key]
+        if network and network.valid then
+            for field, role in pairs(ROLES_BY_FIELD) do
+                for _, entity in ipairs(network[field]) do
+                    if entity.valid and entity.type ~= "character"
+                        and not seen[entity.unit_number]
+                        and not is_zone_active(entity.surface, entity.position) then
+                        seen[entity.unit_number] = true
+                        TrackerEvents.log_inventory_delta(
+                            "container_" .. entity.unit_number,
+                            "container",
+                            TrackerEvents.container_contents(entity)
+                        )
+                    end
+                end
+            end
+        end
+    end
 end
 
 return Logistics

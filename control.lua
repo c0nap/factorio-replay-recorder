@@ -9,6 +9,9 @@ local Exporter = require("script.exporter")
 local CombatZones = require("script.combat_zones")
 local Tracker = require("script.tracker")
 local TrackerEvents = require("script.tracker_events")
+local Logistics = require("script.logistics")
+local ItemChains = require("script.item_chains")
+local FluidChains = require("script.fluid_chains")
 local Init = require("script.init")
 local Config = require("script.config")
 
@@ -17,15 +20,19 @@ script.on_configuration_changed(Init.on_configuration_changed)
 
 -- Combat & Death Hooks
 script.on_event(defines.events.on_entity_died, Tracker.on_entity_died)
+script.on_event(defines.events.on_post_entity_died, Tracker.on_post_entity_died)
+script.on_event(defines.events.on_character_corpse_expired, Tracker.on_character_corpse_expired)
 script.on_event(defines.events.on_entity_damaged, Tracker.on_entity_damaged)
 script.on_event(defines.events.on_script_trigger_effect, Tracker.on_script_trigger_effect)
 script.on_event(defines.events.on_trigger_created_entity, Tracker.on_trigger_created_entity)
 script.on_event(defines.events.on_player_respawned, Tracker.on_player_respawned)
+script.on_event(defines.events.on_object_destroyed, TrackerEvents.on_object_destroyed)
 
 -- Inventory Hooks
 script.on_event(defines.events.on_player_main_inventory_changed, TrackerEvents.on_player_inventory_changed)
 script.on_event(defines.events.on_player_ammo_inventory_changed, TrackerEvents.on_player_inventory_changed)
 script.on_event(defines.events.on_player_gun_inventory_changed, TrackerEvents.on_player_inventory_changed)
+script.on_event(defines.events.on_player_dropped_item, TrackerEvents.on_player_dropped_item)
 
 -- AI Group & Spawning Hooks
 script.on_event(defines.events.on_unit_group_created, TrackerEvents.on_unit_group_created)
@@ -62,6 +69,15 @@ local FLUSH_INTERVAL_TICKS = 60
 script.on_event(defines.events.on_tick, function()
     CombatZones.tick()
     Tracker.tick()
+
+    -- "Distant" data - logistics network contents, far-chain item
+    -- rollups, fluid segments - is sampled far less often than the
+    -- per-tick physical scan above; see Config.distant_sample_interval_ticks.
+    if game.tick % Config.distant_sample_interval_ticks() == 0 then
+        Logistics.tick(storage.active_zones, CombatZones.is_zone_active, CombatZones.chunk_area)
+        ItemChains.tick(storage.active_zones, CombatZones.is_zone_active, CombatZones.chunk_area)
+        FluidChains.tick(storage.active_zones, CombatZones.chunk_area)
+    end
 
     if game.tick % FLUSH_INTERVAL_TICKS == 0 then
         Exporter.flush()

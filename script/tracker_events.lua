@@ -1,9 +1,13 @@
 -- script/tracker_events.lua
--- Handles things that are naturally "events" rather than per-tick state:
--- inventory changes, biter unit groups forming up, which group each unit
--- currently belongs to, and which spawner a unit came from. Recording
--- these as diffs/one-shot events (instead of re-dumping a full inventory
--- or group roster every tick) is what keeps the replay file small.
+-- Shared diffing/reading helpers plus the handful of things that are
+-- naturally "events" rather than per-tick state: inventory changes, biter
+-- unit groups forming up, which group each unit currently belongs to, and
+-- which spawner a unit came from. Recording state as diffs/one-shot
+-- events (instead of re-dumping a full inventory or group roster every
+-- tick) is what keeps the replay file small - this file is where that
+-- diffing logic lives so every other module (Tracker, Logistics,
+-- ItemChains, FluidChains) shares one implementation instead of five
+-- slightly-different copies.
 local Exporter = require("script.exporter")
 
 local TrackerEvents = {}
@@ -29,9 +33,12 @@ end
 -- Diffs `current_contents` (a name -> count table, e.g. from
 -- flatten_contents above) against whatever we last saw for `owner_key`,
 -- and logs only the items that changed. `owner_key` identifies whoever
--- owns the inventory (a player index, or a vehicle's unit_number) so
--- players and vehicles can share this same helper.
-function TrackerEvents.log_inventory_delta(owner_key, owner_kind, current_contents)
+-- owns the inventory (a player index, a vehicle's/container's/inserter's
+-- unit_number) so every kind of item owner can share this one helper.
+-- `extra_fields`, if given, is merged into the logged event's data table -
+-- used for things like a corpse's position, which has nowhere else to be
+-- reported (see Tracker's corpse tracking).
+function TrackerEvents.log_inventory_delta(owner_key, owner_kind, current_contents, extra_fields)
     storage.inventory_cache = storage.inventory_cache or {}
     local previous = storage.inventory_cache[owner_key] or {}
     local deltas = {}
@@ -50,14 +57,193 @@ function TrackerEvents.log_inventory_delta(owner_key, owner_kind, current_conten
     end
 
     if #deltas > 0 then
-        Exporter.log_event(game.tick, "inventory_delta", {
+        local payload = {
             owner = owner_key,
             owner_kind = owner_kind,
             changes = deltas
-        })
+        }
+        if extra_fields then
+            for key, value in pairs(extra_fields) do
+                payload[key] = value
+            end
+        end
+        Exporter.log_event(game.tick, "inventory_delta", payload)
     end
 
     storage.inventory_cache[owner_key] = current_contents
+end
+
+-- Fluid equivalent of log_inventory_delta, kept as a separate event type
+-- (fluid_delta, not inventory_delta) and a separate cache namespace -
+-- fluid amounts are continuous floats, not discrete item counts, and
+-- fluid/item names could in principle collide, so the two streams are
+-- deliberately never merged into one. See script/fluid_chains.lua.
+function TrackerEvents.log_fluid_delta(owner_key, current_fluids, extra_fields)
+    storage.fluid_cache = storage.fluid_cache or {}
+    local previous = storage.fluid_cache[owner_key] or {}
+    local deltas = {}
+
+    for name, amount in pairs(current_fluids) do
+        local prev_amount = previous[name] or 0
+        if amount ~= prev_amount then
+            table.insert(deltas, {fluid = name, delta = amount - prev_amount})
+        end
+    end
+
+    for name, prev_amount in pairs(previous) do
+        if not current_fluids[name] then
+            table.insert(deltas, {fluid = name, delta = -prev_amount})
+        end
+    end
+
+    if #deltas > 0 then
+        local payload = {owner = owner_key, changes = deltas}
+        if extra_fields then
+            for key, value in pairs(extra_fields) do
+                payload[key] = value
+            end
+        end
+        Exporter.log_event(game.tick, "fluid_delta", payload)
+    end
+
+    storage.fluid_cache[owner_key] = current_fluids
+end
+
+-- A container-like entity's full contents as a flat {name -> count}
+-- table (always a table, never nil, so callers can feed it straight into
+-- log_inventory_delta - an entity that just lost everything still needs a
+-- real {} to diff against, not nil). Reads the main "chest" inventory
+-- plus, for logistic containers, their trash slot. pcall-guarded per read
+-- because a logistics network's requesters/providers/storages aren't
+-- limited to plain chests - see script/logistics.lua.
+function TrackerEvents.container_contents(entity)
+    local contents = {}
+
+    local ok_chest, chest = pcall(function() return entity.get_inventory(defines.inventory.chest) end)
+    if ok_chest and chest then
+        for name, count in pairs(TrackerEvents.flatten_contents(chest.get_contents())) do
+            contents[name] = (contents[name] or 0) + count
+        end
+    end
+
+    local ok_trash, trash = pcall(function() return entity.get_inventory(defines.inventory.logistic_container_trash) end)
+    if ok_trash and trash then
+        for name, count in pairs(TrackerEvents.flatten_contents(trash.get_contents())) do
+            contents[name] = (contents[name] or 0) + count
+        end
+    end
+
+    return contents
+end
+
+-- A character-corpse's dropped-item inventory, same always-a-table
+-- contract as container_contents.
+function TrackerEvents.corpse_contents(entity)
+    local ok, inv = pcall(function() return entity.get_inventory(defines.inventory.character_corpse) end)
+    if ok and inv then
+        return TrackerEvents.flatten_contents(inv.get_contents())
+    end
+    return {}
+end
+
+-- An inserter's hand: LuaItemStack, not an inventory - `held_stack`
+-- always exists as an object, but `valid_for_read` says whether it's
+-- currently holding anything. Same always-a-table contract as the above.
+function TrackerEvents.held_stack_contents(entity)
+    local ok, stack = pcall(function() return entity.held_stack end)
+    if ok and stack and stack.valid_for_read then
+        return {[stack.name] = stack.count}
+    end
+    return {}
+end
+
+-- A ground item-entity's stack ("stack" is only readable when entity.type
+-- == "item-entity"). Same shape/contract as held_stack_contents above -
+-- a single-item table, or {} if it's somehow not valid for reading.
+function TrackerEvents.ground_item_contents(entity)
+    local ok, stack = pcall(function() return entity.stack end)
+    if ok and stack and stack.valid_for_read then
+        return {[stack.name] = stack.count}
+    end
+    return {}
+end
+
+-- Registers a ground item-entity for on_object_destroyed, the one time we
+-- see it (storage.registered_ground_items guards against re-registering
+-- every tick it's re-scanned - register_on_object_destroyed is idempotent
+-- per its own docs, but there's no reason to call it repeatedly). This is
+-- what closes the gap on_entity_died couldn't: register_on_object_destroyed
+-- fires regardless of WHY the object was removed (picked up by walking
+-- over it, mined, burned, ...), not just combat destruction.
+function TrackerEvents.ensure_ground_item_registered(entity)
+    if not entity.unit_number or storage.registered_ground_items[entity.unit_number] then return end
+
+    local ok = pcall(function() script.register_on_object_destroyed(entity) end)
+    if ok then
+        storage.registered_ground_items[entity.unit_number] = true
+    end
+end
+
+-- Fires for ANY object this mod has registered via
+-- register_on_object_destroyed, regardless of mod or object type (the
+-- registry is global, per its docs) - so this only acts when the
+-- destroyed object is a LuaEntity (defines.target_type.entity) whose
+-- useful_id (== the entity's former unit_number for entity targets) is
+-- one we actually registered ourselves, via storage.registered_ground_items.
+-- Clears the cache entry (the actual fix for the leak) and emits a
+-- one-time ground_item_removed event, mirroring corpse_expired.
+function TrackerEvents.on_object_destroyed(event)
+    if event.type ~= defines.target_type.entity then return end
+    if not storage.registered_ground_items[event.useful_id] then return end
+
+    storage.registered_ground_items[event.useful_id] = nil
+    storage.inventory_cache["ground_item_" .. event.useful_id] = nil
+    Exporter.log_event(game.tick, "ground_item_removed", {owner = "ground_item_" .. event.useful_id})
+end
+
+local function belt_line_contents_equal(a, b)
+    a, b = a or {}, b or {}
+    for item, count in pairs(a) do
+        if b[item] ~= count then return false end
+    end
+    for item, count in pairs(b) do
+        if a[item] ~= count then return false end
+    end
+    return true
+end
+
+-- Belts are extremely common near any base, so if every belt's full
+-- contents were logged on every tick a fight was active, belt spam alone
+-- could dwarf the rest of the replay. Instead, cache each line's last-seen
+-- contents and only write out lines that actually changed since - the
+-- same "diff, don't dump" approach used for inventories. Shared between
+-- Tracker's per-tick physical scan and ItemChains' near-hop belts so both
+-- write through the same cache and don't fight each other over the same
+-- belt.
+function TrackerEvents.log_belt_contents(entities)
+    storage.belt_line_cache = storage.belt_line_cache or {}
+    local belt_data = {}
+
+    for _, ent in ipairs(entities) do
+        if ent.valid then
+            local lines = {}
+            for i = 1, ent.get_max_transport_line_index() do
+                local cache_key = ent.unit_number .. "_" .. i
+                local contents = TrackerEvents.flatten_contents(ent.get_transport_line(i).get_contents())
+                if not belt_line_contents_equal(storage.belt_line_cache[cache_key], contents) then
+                    table.insert(lines, {line = i, contents = contents})
+                    storage.belt_line_cache[cache_key] = contents
+                end
+            end
+            if #lines > 0 then
+                table.insert(belt_data, {id = ent.unit_number, name = ent.name, position = ent.position, lines = lines})
+            end
+        end
+    end
+
+    if #belt_data > 0 then
+        Exporter.log_event(game.tick, "belt_contents", belt_data)
+    end
 end
 
 function TrackerEvents.on_player_inventory_changed(event)
@@ -67,17 +253,48 @@ function TrackerEvents.on_player_inventory_changed(event)
     local inv_main = player.get_inventory(defines.inventory.character_main)
     local inv_ammo = player.get_inventory(defines.inventory.character_ammo)
     local inv_guns = player.get_inventory(defines.inventory.character_guns)
+    local inv_trash = player.get_inventory(defines.inventory.character_trash)
+
+    -- NOT `ipairs({inv_main, inv_ammo, inv_guns, inv_trash})`: any of
+    -- these can individually be nil, and ipairs stops dead at the first
+    -- nil slot in the array regardless of what comes after it - a nil
+    -- inv_main would have silently dropped ammo/guns/trash from tracking
+    -- entirely. Building the list by only inserting the truthy ones
+    -- avoids ever putting a nil in the array in the first place.
+    local inventories = {}
+    if inv_main then table.insert(inventories, inv_main) end
+    if inv_ammo then table.insert(inventories, inv_ammo) end
+    if inv_guns then table.insert(inventories, inv_guns) end
+    if inv_trash then table.insert(inventories, inv_trash) end
 
     local combined_contents = {}
-    for _, inv in ipairs({inv_main, inv_ammo, inv_guns}) do
-        if inv then
-            for name, count in pairs(TrackerEvents.flatten_contents(inv.get_contents())) do
-                combined_contents[name] = (combined_contents[name] or 0) + count
-            end
+    for _, inv in ipairs(inventories) do
+        for name, count in pairs(TrackerEvents.flatten_contents(inv.get_contents())) do
+            combined_contents[name] = (combined_contents[name] or 0) + count
         end
     end
 
     TrackerEvents.log_inventory_delta("player_" .. event.player_index, "player", combined_contents)
+end
+
+-- One-time record of a ground item's origin, mirroring corpse_created -
+-- the ongoing contents (what it currently holds) are tracked separately
+-- via Tracker's per-tick physical scan (ground_item_<id> inventory_delta),
+-- same split as corpses. This only covers manual player drops -
+-- on_player_dropped_item is the only creation-side event confirmed so
+-- far; an item-entity that appears some other way (inserter overflow,
+-- explosion debris) still gets picked up by the per-tick scan the moment
+-- it's physically in an active zone, just without this provenance record.
+function TrackerEvents.on_player_dropped_item(event)
+    local entity = event.entity
+    if not entity or not entity.valid or not entity.unit_number then return end
+
+    TrackerEvents.ensure_ground_item_registered(entity)
+    Exporter.log_event(game.tick, "ground_item_created", {
+        owner = "ground_item_" .. entity.unit_number,
+        position = entity.position,
+        player_index = event.player_index,
+    })
 end
 
 -- Human-readable form of defines.group_state, so consumers of the JSON

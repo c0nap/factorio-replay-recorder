@@ -44,6 +44,27 @@ local function record_kill_stat(entity)
     return kind, size
 end
 
+-- storage.inventory_cache key prefix per entity type whose owner_key is
+-- "<prefix><unit_number>" - used to clean up on death so a long-dead
+-- entity's cache entry doesn't linger for the rest of the save. item-entity
+-- is deliberately NOT here - on_entity_died only covers destruction (fire/
+-- explosion), not the far more common "picked up by walking over it" case,
+-- so ground items use the strictly more general
+-- register_on_object_destroyed/on_object_destroyed mechanism instead (see
+-- TrackerEvents.on_object_destroyed), which covers every removal cause in
+-- one place rather than needing two.
+local CACHE_CLEANUP_PREFIX = {
+    ["car"] = "vehicle_",
+    ["spider-vehicle"] = "vehicle_",
+    ["cargo-wagon"] = "vehicle_",
+    ["artillery-wagon"] = "vehicle_",
+    ["container"] = "container_",
+    ["logistic-container"] = "container_",
+    ["construction-robot"] = "robot_",
+    ["logistic-robot"] = "robot_",
+    ["inserter"] = "inserter_",
+}
+
 function Tracker.on_entity_died(event)
     local entity = event.entity
     if not entity.valid then return end
@@ -71,6 +92,22 @@ function Tracker.on_entity_died(event)
 
     local scoreable = is_scoreable_kind(entity.type) and entity.force.name ~= "enemy"
 
+    -- A dying player character's own corpse doesn't exist yet at this
+    -- point (on_post_entity_died creates it, after this event), and that
+    -- later event only carries the ORIGINAL entity's unit_number, not a
+    -- direct reference back to this one - so identity/cause is stashed
+    -- here, keyed by that same unit_number, for on_post_entity_died to
+    -- pick back up once the corpse exists. Non-player characters (no
+    -- .player) are skipped - there's no player identity to attach.
+    if entity.type == "character" and entity.player and entity.unit_number then
+        storage.pending_corpse_info[entity.unit_number] = {
+            player_index = entity.player.index,
+            player_name = entity.player.name,
+            death_tick = game.tick,
+            killer = killer_data,
+        }
+    end
+
     -- Deaths always try to open/extend a combat zone (gated internally on
     -- player proximity), same as before. What's new is that we only bother
     -- writing the death itself to the file if it happened somewhere we
@@ -88,11 +125,16 @@ function Tracker.on_entity_died(event)
         record_score_event(entity, killer_data)
     end
 
-    if entity.type == "car" or entity.type == "spider-vehicle" then
-        -- Otherwise every vehicle that's ever fought near a player leaves
-        -- a permanent entry behind, growing the save forever over a long
-        -- campaign even though the vehicle itself is gone for good.
-        storage.inventory_cache["vehicle_" .. entity.unit_number] = nil
+    local cleanup_prefix = CACHE_CLEANUP_PREFIX[entity.type]
+    if cleanup_prefix and entity.unit_number then
+        -- Otherwise every vehicle/container/robot/inserter that's ever
+        -- been near a player leaves a permanent entry behind, growing the
+        -- save forever over a long campaign even though the entity itself
+        -- is gone for good. Corpses are deliberately not covered here -
+        -- they don't fire on_entity_died when they eventually decay/expire,
+        -- they fire on_character_corpse_expired instead (see
+        -- Tracker.on_character_corpse_expired below).
+        storage.inventory_cache[cleanup_prefix .. entity.unit_number] = nil
     end
 
     if entity.type == "unit" and entity.unit_number then
@@ -129,6 +171,49 @@ function Tracker.on_entity_died(event)
         killer = killer_data,
         loot = loot,
     })
+end
+
+-- Fires after on_entity_died, once the corpse(s) an entity's death
+-- produced actually exist. This is the only place a player corpse's
+-- provenance ("this is a player corpse from <time>, here's who and what
+-- killed them") can be recorded - on_entity_died fires too early (the
+-- corpse doesn't exist yet) and the corpse's own inventory_delta stream
+-- (Tracker.scan_physical_items) has nowhere to carry this one-time
+-- context. `event.unit_number` is the ORIGINAL died entity's unit_number
+-- (not the corpse's), which is exactly what on_entity_died stashed
+-- pending info under above - correlates the two without any timing or
+-- position matching.
+function Tracker.on_post_entity_died(event)
+    local pending = storage.pending_corpse_info[event.unit_number]
+    storage.pending_corpse_info[event.unit_number] = nil
+    if not pending then return end
+
+    for _, corpse in ipairs(event.corpses or {}) do
+        if corpse.valid and corpse.type == "character-corpse" and corpse.unit_number then
+            Exporter.log_event(game.tick, "corpse_created", {
+                owner = "corpse_" .. corpse.unit_number,
+                position = corpse.position,
+                player_index = pending.player_index,
+                player_name = pending.player_name,
+                death_tick = pending.death_tick,
+                killer = pending.killer,
+            })
+        end
+    end
+end
+
+-- Fires when a character corpse times out or is fully looted (not when
+-- mined - see on_pre_player_mined_item for that, not hooked here since
+-- mining a corpse is rare and the cache entry would just get overwritten
+-- by the next scan anyway). This is the actual fix for the "corpse cache
+-- entries leak forever" gap: without this, storage.inventory_cache["corpse_"
+-- ..id] has no event that ever tells us the corpse is gone for good.
+function Tracker.on_character_corpse_expired(event)
+    local corpse = event.corpse
+    if not corpse or not corpse.valid or not corpse.unit_number then return end
+
+    storage.inventory_cache["corpse_" .. corpse.unit_number] = nil
+    Exporter.log_event(game.tick, "corpse_expired", {owner = "corpse_" .. corpse.unit_number})
 end
 
 function Tracker.on_player_respawned(event)
@@ -279,47 +364,42 @@ local function unit_group_id(ent)
     return storage.unit_group_membership[ent.unit_number]
 end
 
-local BELT_TYPES = {["transport-belt"] = true, ["underground-belt"] = true, ["splitter"] = true}
+-- Everything "physically here" that isn't already covered by the mobile
+-- loop or belt loop above: chests, corpses, and inserter hands. Read every
+-- tick, same as belts - these are cheap, bounded-by-chunk-size queries,
+-- and (design doc) items in a chest or an inserter's grip are exactly the
+-- "immediately here on the battlefield" tier, not the "probably on the
+-- way" one that script/logistics.lua and script/item_chains.lua sample on
+-- a slow interval instead.
+local PHYSICAL_ITEM_TYPES = {"container", "logistic-container", "character-corpse", "inserter", "item-entity"}
 
-local function contents_equal(a, b)
-    a, b = a or {}, b or {}
-    for item, count in pairs(a) do
-        if b[item] ~= count then return false end
-    end
-    for item, count in pairs(b) do
-        if a[item] ~= count then return false end
-    end
-    return true
-end
-
--- Belts are extremely common near any base, so if we logged every belt's
--- full contents on every tick a fight was active, belt spam alone could
--- dwarf the rest of the replay. Instead, cache each line's last-seen
--- contents and only write out lines that actually changed since - the
--- same "diff, don't dump" approach used for inventories.
-local function log_belt_contents(entities)
-    storage.belt_line_cache = storage.belt_line_cache or {}
-    local belt_data = {}
+local function scan_physical_items(surface, area)
+    local entities = surface.find_entities_filtered{area = area, type = PHYSICAL_ITEM_TYPES}
 
     for _, ent in ipairs(entities) do
-        if BELT_TYPES[ent.type] then
-            local lines = {}
-            for i = 1, ent.get_max_transport_line_index() do
-                local cache_key = ent.unit_number .. "_" .. i
-                local contents = TrackerEvents.flatten_contents(ent.get_transport_line(i).get_contents())
-                if not contents_equal(storage.belt_line_cache[cache_key], contents) then
-                    table.insert(lines, {line = i, contents = contents})
-                    storage.belt_line_cache[cache_key] = contents
-                end
-            end
-            if #lines > 0 then
-                table.insert(belt_data, {id = ent.unit_number, name = ent.name, position = ent.position, lines = lines})
+        if ent.valid and ent.unit_number then
+            if ent.type == "container" or ent.type == "logistic-container" then
+                TrackerEvents.log_inventory_delta("container_" .. ent.unit_number, "container", TrackerEvents.container_contents(ent))
+            elseif ent.type == "character-corpse" then
+                -- Corpses aren't in the static chunk dump (they're
+                -- dynamic - they appear and eventually decay) and
+                -- inventory_delta carries no position field otherwise,
+                -- so this is the only place a corpse's location is ever
+                -- reported. Not redundant with death_event's `loot`:
+                -- loot is what was dropped at the moment of death, this
+                -- is what happens to that pile afterward (looting,
+                -- partial decay).
+                TrackerEvents.log_inventory_delta("corpse_" .. ent.unit_number, "corpse", TrackerEvents.corpse_contents(ent), {position = ent.position})
+            elseif ent.type == "inserter" then
+                TrackerEvents.log_inventory_delta("inserter_" .. ent.unit_number, "inserter_hand", TrackerEvents.held_stack_contents(ent))
+            elseif ent.type == "item-entity" then
+                -- Same "no other position channel" situation as corpses -
+                -- item-entities are dynamic (not in the static chunk dump)
+                -- and inventory_delta otherwise carries no position.
+                TrackerEvents.ensure_ground_item_registered(ent)
+                TrackerEvents.log_inventory_delta("ground_item_" .. ent.unit_number, "ground_item", TrackerEvents.ground_item_contents(ent), {position = ent.position})
             end
         end
-    end
-
-    if #belt_data > 0 then
-        Exporter.log_event(game.tick, "belt_contents", belt_data)
     end
 end
 
@@ -352,12 +432,19 @@ function Tracker.tick()
 
                 if VEHICLE_INVENTORY_SLOTS[ent.type] then
                     TrackerEvents.log_inventory_delta("vehicle_" .. ent.unit_number, "vehicle", vehicle_inventory_contents(ent))
+                elseif ent.type == "construction-robot" or ent.type == "logistic-robot" then
+                    local inv = ent.get_inventory(defines.inventory.robot_cargo)
+                    if inv then
+                        TrackerEvents.log_inventory_delta("robot_" .. ent.unit_number, "robot", TrackerEvents.flatten_contents(inv.get_contents()))
+                    end
                 end
             end
         end
 
         local belt_entities = zone.surface.find_entities_filtered{area = area, type = {"transport-belt", "underground-belt", "splitter"}}
-        log_belt_contents(belt_entities)
+        TrackerEvents.log_belt_contents(belt_entities)
+
+        scan_physical_items(zone.surface, area)
     end
 
     if #mobile_data > 0 then

@@ -191,6 +191,11 @@ local function dump_static_chunk_data(surface, chunk_x, chunk_y)
         end
     end
 
+    -- Logistics.tick() re-samples this chunk's reachable networks on its
+    -- own slow interval, without re-scanning this chunk's statics every
+    -- time - it just needs to know which forces to check.
+    storage.chunk_force_names[chunk_id(surface, chunk_x, chunk_y)] = force_names
+
     -- This is new, less battle-tested integration territory (a whole
     -- separate API - logistics networks - rather than just more LuaEntity
     -- fields), so it's pcall-wrapped at the top level: if anything about

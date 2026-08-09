@@ -25,6 +25,37 @@ local function ensure_storage()
     -- snapshots use to group spawners into "bases".
     storage.spawned_by = storage.spawned_by or {}
 
+    -- "surface_force_networkid" -> {expires_at}. A logistics network's
+    -- eligibility window for Tier 2 sampling - see script/logistics.lua.
+    storage.active_networks = storage.active_networks or {}
+
+    -- chunk_id -> the set of forces seen in that chunk's static dump, so
+    -- Logistics.tick() knows which forces to re-check per active zone
+    -- without re-scanning the chunk's statics every sample.
+    storage.chunk_force_names = storage.chunk_force_names or {}
+
+    -- Diff caches for belt lines and fluid segments - same lazy-init
+    -- pattern as storage.inventory_cache, just made explicit here too.
+    storage.belt_line_cache = storage.belt_line_cache or {}
+    storage.fluid_cache = storage.fluid_cache or {}
+
+    -- A dying character's unit_number -> {player_index, player_name,
+    -- death_tick, killer}, bridging on_entity_died (where the info is
+    -- available but the corpse doesn't exist yet) to on_post_entity_died
+    -- (where the corpse exists but only the original unit_number is
+    -- carried over) - see Tracker.on_entity_died/on_post_entity_died.
+    -- Always cleared by on_post_entity_died the tick after it's written,
+    -- so this never holds more than one tick's worth of pending deaths.
+    storage.pending_corpse_info = storage.pending_corpse_info or {}
+
+    -- unit_number -> true for every ground item-entity registered via
+    -- script.register_on_object_destroyed, so TrackerEvents.on_object_destroyed
+    -- (a global event covering every object ANY mod registers) knows which
+    -- destroyed entities are actually ours to clean up, and
+    -- ensure_ground_item_registered doesn't re-register one it's already
+    -- watching. Entries are removed once on_object_destroyed fires for them.
+    storage.registered_ground_items = storage.registered_ground_items or {}
+
     -- Was written every time a biter unit group formed but never actually
     -- read back anywhere; dropping it stops it from growing forever across
     -- a long save. Explicitly cleared here so saves from before this fix
