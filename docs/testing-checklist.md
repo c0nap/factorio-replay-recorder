@@ -83,6 +83,11 @@ fighting - just stand there a couple of seconds. Everything from here on
 records regardless of nearby combat, so you don't need to babysit zone
 activity for the rest of this list.
 
+This is also the step that exercises the perf fix for the freezing you
+ran into on a save with a lot of already-generated chunks: enabling this
+should no longer stall the game, and turning it back off (step 12) should
+recover immediately instead of staying laggy for a while afterward.
+
 ## 5. Combat, turrets, walls, kill classification, fire/acid
 
 ```
