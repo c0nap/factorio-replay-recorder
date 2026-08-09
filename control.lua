@@ -31,6 +31,7 @@ script.on_event(defines.events.on_player_respawned, Tracker.on_player_respawned)
 script.on_event(defines.events.on_player_main_inventory_changed, TrackerEvents.on_player_inventory_changed)
 script.on_event(defines.events.on_player_ammo_inventory_changed, TrackerEvents.on_player_inventory_changed)
 script.on_event(defines.events.on_player_gun_inventory_changed, TrackerEvents.on_player_inventory_changed)
+script.on_event(defines.events.on_player_dropped_item, TrackerEvents.on_player_dropped_item)
 
 -- AI Group & Spawning Hooks
 script.on_event(defines.events.on_unit_group_created, TrackerEvents.on_unit_group_created)

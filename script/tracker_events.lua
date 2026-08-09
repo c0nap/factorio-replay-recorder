@@ -157,6 +157,17 @@ function TrackerEvents.held_stack_contents(entity)
     return {}
 end
 
+-- A ground item-entity's stack ("stack" is only readable when entity.type
+-- == "item-entity"). Same shape/contract as held_stack_contents above -
+-- a single-item table, or {} if it's somehow not valid for reading.
+function TrackerEvents.ground_item_contents(entity)
+    local ok, stack = pcall(function() return entity.stack end)
+    if ok and stack and stack.valid_for_read then
+        return {[stack.name] = stack.count}
+    end
+    return {}
+end
+
 local function belt_line_contents_equal(a, b)
     a, b = a or {}, b or {}
     for item, count in pairs(a) do
@@ -231,6 +242,25 @@ function TrackerEvents.on_player_inventory_changed(event)
     end
 
     TrackerEvents.log_inventory_delta("player_" .. event.player_index, "player", combined_contents)
+end
+
+-- One-time record of a ground item's origin, mirroring corpse_created -
+-- the ongoing contents (what it currently holds) are tracked separately
+-- via Tracker's per-tick physical scan (ground_item_<id> inventory_delta),
+-- same split as corpses. This only covers manual player drops -
+-- on_player_dropped_item is the only creation-side event confirmed so
+-- far; an item-entity that appears some other way (inserter overflow,
+-- explosion debris) still gets picked up by the per-tick scan the moment
+-- it's physically in an active zone, just without this provenance record.
+function TrackerEvents.on_player_dropped_item(event)
+    local entity = event.entity
+    if not entity or not entity.valid or not entity.unit_number then return end
+
+    Exporter.log_event(game.tick, "ground_item_created", {
+        owner = "ground_item_" .. entity.unit_number,
+        position = entity.position,
+        player_index = event.player_index,
+    })
 end
 
 -- Human-readable form of defines.group_state, so consumers of the JSON

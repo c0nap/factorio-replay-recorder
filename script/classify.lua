@@ -22,9 +22,12 @@ Classify.MOBILE_TYPES = {
     ["logistic-robot"] = true,
 }
 
--- Transient or purely decorative entities that never belong in a replay:
--- they either produce their own dedicated events (fire/acid, handled by
--- Tracker.on_entity_died) or carry no information a combat viewer needs.
+-- Entities excluded from the one-time static chunk dump: either purely
+-- decorative/transient with no information a combat viewer needs (fire/
+-- acid are handled by Tracker.on_entity_died instead), or dynamic enough
+-- that a one-time dump would go stale immediately - character-corpse and
+-- item-entity are the latter case, tracked separately and ongoing via
+-- Tracker's per-tick physical scan instead of appearing here.
 Classify.IGNORED_TYPES = {
     ["resource"] = true,
     ["fish"] = true,

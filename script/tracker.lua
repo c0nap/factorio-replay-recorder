@@ -57,6 +57,7 @@ local CACHE_CLEANUP_PREFIX = {
     ["construction-robot"] = "robot_",
     ["logistic-robot"] = "robot_",
     ["inserter"] = "inserter_",
+    ["item-entity"] = "ground_item_",
 }
 
 function Tracker.on_entity_died(event)
@@ -365,7 +366,7 @@ end
 -- "immediately here on the battlefield" tier, not the "probably on the
 -- way" one that script/logistics.lua and script/item_chains.lua sample on
 -- a slow interval instead.
-local PHYSICAL_ITEM_TYPES = {"container", "logistic-container", "character-corpse", "inserter"}
+local PHYSICAL_ITEM_TYPES = {"container", "logistic-container", "character-corpse", "inserter", "item-entity"}
 
 local function scan_physical_items(surface, area)
     local entities = surface.find_entities_filtered{area = area, type = PHYSICAL_ITEM_TYPES}
@@ -386,6 +387,11 @@ local function scan_physical_items(surface, area)
                 TrackerEvents.log_inventory_delta("corpse_" .. ent.unit_number, "corpse", TrackerEvents.corpse_contents(ent), {position = ent.position})
             elseif ent.type == "inserter" then
                 TrackerEvents.log_inventory_delta("inserter_" .. ent.unit_number, "inserter_hand", TrackerEvents.held_stack_contents(ent))
+            elseif ent.type == "item-entity" then
+                -- Same "no other position channel" situation as corpses -
+                -- item-entities are dynamic (not in the static chunk dump)
+                -- and inventory_delta otherwise carries no position.
+                TrackerEvents.log_inventory_delta("ground_item_" .. ent.unit_number, "ground_item", TrackerEvents.ground_item_contents(ent), {position = ent.position})
             end
         end
     end
