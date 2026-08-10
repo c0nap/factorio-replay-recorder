@@ -43,7 +43,8 @@ All settings live under *Settings > Mod Settings > Map* and can be changed witho
 | Chunk backfill per tick | 20 chunks | When full recording mode turns on with already-generated chunks in the save, how many of them get scanned and captured per tick while catching up. Lower spreads the catch-up out over more ticks (smoother, slower to finish); higher finishes faster at the cost of more work per tick. See [Full Recording Mode](#full-recording-mode-performance) below. |
 | Flush interval | 1 second | How often the buffered event queue gets serialized and written to `replay.json`. Larger values batch more events into fewer, bigger writes; smaller values write more often in smaller chunks. |
 | Full recording mode | Off | Disables cropping and records every generated chunk continuously. **Produces enormous files** (potentially gigabytes per hour) - meant for short recordings or debugging, not routine play. |
-| Diagnostics enabled | Off | Logs a `diagnostics_tick` event every tick with per-tick timing (see [Performance diagnostics](#performance-diagnostics) below). Only worth turning on while actively chasing a performance problem - it adds a full extra event every single tick. |
+| Diagnostics enabled | Off | Logs a `diagnostics_tick` event every tick with per-tick timing (see [Performance diagnostics](#performance-diagnostics) below - **currently produces unusable data**, see that section). |
+| Battlefield marker enabled | Off | Draws a cyan line around the exterior perimeter of whatever chunks are currently recording (see [Battlefield marker](#battlefield-marker) below). A no-op under full recording mode. |
 
 If you don't write Lua and just want to tune how aggressively replays are cropped, this is the only place you need to look - the settings menu is the supported way to change this mod's behavior, no code editing required.
 
@@ -63,17 +64,38 @@ queued.
 
 ### Performance diagnostics
 
-Turning on "Diagnostics enabled" logs a `diagnostics_tick` event every
-tick with three timings, each measured via `game.create_profiler()`:
-`tick_time` (the whole `on_tick` handler), `scan_time` (everything except
-the JSON write - `CombatZones`/`Tracker`/`Logistics`/`ItemChains`/
-`FluidChains`), and `write_time` (`Exporter.flush()` alone, present only
-on ticks where a flush actually happened). This doesn't fix anything by
-itself - it exists to answer "is a stall scan-bound or IO-bound" with real
-numbers instead of a guess. `tools/inspect_replay.py` breaks the recorded
-timings down into min/p50/mean/p95/max automatically; see its
-"Diagnostics" section. Leave this off for normal recording - it adds a
-full extra event every single tick.
+**Currently produces unusable data - see below.** Turning on "Diagnostics
+enabled" logs a `diagnostics_tick` event every tick with three timings,
+each measured via `game.create_profiler()`: `tick_time` (the whole
+`on_tick` handler), `scan_time` (everything except the JSON write -
+`CombatZones`/`Tracker`/`Logistics`/`ItemChains`/`FluidChains`), and
+`write_time` (`Exporter.flush()` alone, present only on ticks where a
+flush actually happened). The intent is to answer "is a stall scan-bound
+or IO-bound" with real numbers instead of a guess, with
+`tools/inspect_replay.py` breaking the recorded timings down into
+min/p50/mean/p95/max automatically.
+
+The problem: `LuaProfiler` doesn't expose raw time values to Lua at
+all - confirmed in the real API docs, not a bug on either end. It's only
+usable anywhere a `LocalisedString` is accepted (`game.print()`, `log()`,
+GUI text), which does not include this mod's own JSON event log - a
+profiler object dropped into an event's data table just serializes as the
+literal string `"[LuaProfiler]"`. Every `diagnostics_tick` event currently
+logs that same useless string for all three fields. This needs an actual
+design change (most likely: write formatted durations to
+`factorio-current.log` via `log()` instead of into `replay.json`, with a
+separate small tool to parse that log instead of extending
+`inspect_replay.py`) before this setting is worth turning on.
+
+### Battlefield marker
+
+Turning on "Battlefield marker enabled" draws a cyan line around the
+exterior perimeter of whatever chunks are currently active
+(`storage.active_zones`) - recomputed every second via `rendering.draw_line`,
+non-destructively (it never touches real map tiles). A no-op under full
+recording mode, since every chunk is "the zone" then and a border around
+everything would be meaningless. Purely a visual aid for manual testing -
+it has no effect on what gets recorded.
 
 ## Output Format
 
@@ -101,7 +123,7 @@ Data is exported to Factorio's `script-output/replay.json` as newline-delimited 
 | `ground_item_removed` | A tracked ground item is picked up, mined, or destroyed | `owner` (`ground_item_<id>`) |
 | `zone_created` | A chunk starts recording for the first time (not re-logged on every later hit that just extends its timeout) | Chunk id |
 | `zone_expired` | A chunk stops recording after its timeout | Chunk id |
-| `diagnostics_tick` | Every tick, only while the "Diagnostics enabled" setting is on | `tick_time`, `scan_time`, and (flush ticks only) `write_time` - each a `LuaProfiler`-formatted duration string (e.g. `"1.234 ms"`), not a raw number - see [Performance diagnostics](#performance-diagnostics) above |
+| `diagnostics_tick` | Every tick, only while the "Diagnostics enabled" setting is on | `tick_time`, `scan_time`, and (flush ticks only) `write_time` - **currently just the literal string `"[LuaProfiler]"` for all three**, see [Performance diagnostics](#performance-diagnostics) above |
 
 **Cross-referencing item location and motion:** there's no dedicated "item moved" event. An item owned by a player, vehicle, or robot shows up under that owner's `inventory_delta` (`owner_kind` = `player`/`vehicle`/`robot`), and that same owner's position is in every `mobile_positions` update (matched by `id`/`owner`). To know where a player's ammo physically is at tick T, look up their position in `mobile_positions` at T - the two streams are deliberately kept separate (position every tick is cheap and needed for combat rendering regardless of inventory; inventory only needs to be emitted when it actually changes) rather than duplicating position onto every item event.
 

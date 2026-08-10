@@ -15,6 +15,7 @@ local FluidChains = require("script.fluid_chains")
 local Init = require("script.init")
 local Config = require("script.config")
 local Diagnostics = require("script.diagnostics")
+local BattlefieldMarker = require("script.battlefield_marker")
 
 script.on_init(Init.on_init)
 script.on_configuration_changed(Init.on_configuration_changed)
@@ -104,4 +105,6 @@ script.on_event(defines.events.on_tick, function()
     end
 
     Diagnostics.end_tick(diag, write_profiler)
+
+    BattlefieldMarker.tick()
 end)

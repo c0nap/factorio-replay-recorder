@@ -41,15 +41,16 @@ second time as a misfire guard - just run the same line again if nothing
 seems to happen. Cheat mode is worth its own line since you'll type it
 twice either way.
 ```
-/c game.player.force.research_all_technologies(); game.speed=3; settings.global["rrec-distant-sample-interval-seconds"] = {value = 1}; settings.global["rrec-chain-near-hops"] = {value = 1}; settings.global["rrec-chain-max-hops"] = {value = 50}; settings.global["rrec-diagnostics-enabled"] = {value = true}
+/c game.player.force.research_all_technologies(); game.speed=3; settings.global["rrec-distant-sample-interval-seconds"] = {value = 1}; settings.global["rrec-chain-near-hops"] = {value = 1}; settings.global["rrec-chain-max-hops"] = {value = 50}; settings.global["rrec-diagnostics-enabled"] = {value = true}; settings.global["rrec-battlefield-marker-enabled"] = {value = true}
 ```
 Speeds up the slow-sample systems (logistics/item/fluid chains normally
 sample every 5s; this drops it to 1s) and sets the near/far chain split so
 a single hop already counts as "far" - makes the rollup steps below
 produce visible results without needing a huge base. Also turns on the
-optional per-tick performance timings (`diagnostics_tick` events) so
-`tools/inspect_replay.py` has real numbers to summarize afterward - see
-its "Diagnostics" section in the output.
+optional per-tick performance timings (`diagnostics_tick` events - see
+"Diagnostics" in `tools/inspect_replay.py`'s output) and the in-game
+battlefield perimeter marker (a cyan line traced around the exterior edge
+of whatever chunks are currently recording - see step 7).
 
 ## 2. Long-chain rollup via belts (`item_distribution`)
 
@@ -135,18 +136,13 @@ fighting - just stand there a couple of seconds. Everything records
 regardless of nearby combat from here on, so you don't need to babysit
 zone activity for the rest of this list.
 
-There's no in-game visual marker for the active battlefield yet. An
-earlier draft of this step drew a fixed concrete ring around whatever
-chunk the player happened to be standing in - that doesn't track the
-actual (possibly multi-chunk, possibly moving) set of active zones, gets
-baked into the recording itself as real map tiles, and has to be run by
-hand instead of just working. A real version of this needs to be a mod
-feature (auto-tracks `storage.active_zones`, draws only the exterior
-border of however many adjacent chunks are active, is a no-op under full
-recording mode since everything is "the zone" then, and uses a
-non-destructive overlay rather than painting real tiles) gated by its own
-setting - not a checklist command. Pending real `LuaRendering` API docs
-before it's worth building.
+If you turned on the battlefield marker in step 1, you'll notice its cyan
+outline disappears the moment full recording mode comes on - that's by
+design, not a bug: every chunk is "the zone" under full recording, so a
+border around everything would be meaningless. It was tracing the
+exterior perimeter of whatever chunks were actively recording during
+steps 2-6; there's nothing left to outline once that distinction goes
+away.
 
 ## 8. Turrets: damage, kills, and destruction
 
@@ -168,7 +164,7 @@ in the chunk snapshot) - nothing hostile exists yet, so there's no rush.
 Once they're down, run the next command.
 
 ```
-/c local p = game.player.position; local surface = game.player.surface; local gt = surface.create_entity{name="gun-turret", position={p.x, p.y}, force="player"}; gt.insert{name="firearm-magazine", count=10}; local gt_target = surface.create_entity{name="small-biter", position={p.x + 6, p.y}, force="enemy"}; gt_target.health = 1; local ft = surface.create_entity{name="flamethrower-turret", position={p.x + 40, p.y}, force="player"}; ft.insert_fluid{name="crude-oil", amount=100}; local ft_target = surface.create_entity{name="small-biter", position={p.x + 46, p.y}, force="enemy"}; ft_target.health = 1; local doomed = surface.create_entity{name="gun-turret", position={p.x + 80, p.y}, force="player"}; doomed.health = 1; surface.create_entity{name="behemoth-biter", position={p.x + 84, p.y}, force="enemy"}; local spawner = surface.create_entity{name="biter-spawner", position={p.x - 40, p.y}, force="enemy"}; spawner.health = 1; local ok, worm = pcall(function() return surface.create_entity{name="medium-worm-turret", position={p.x - 46, p.y}, force="enemy"} end); if ok and worm then worm.health = 1 end
+/c local p = game.player.position; local surface = game.player.surface; local gt = surface.create_entity{name="gun-turret", position={p.x, p.y}, force="player"}; gt.get_inventory(defines.inventory.turret_ammo).insert{name="firearm-magazine", count=10}; local gt_target = surface.create_entity{name="small-biter", position={p.x + 6, p.y}, force="enemy"}; gt_target.health = 1; local ft = surface.create_entity{name="flamethrower-turret", position={p.x + 40, p.y}, force="player"}; ft.insert_fluid{name="crude-oil", amount=100}; local ft_target = surface.create_entity{name="small-biter", position={p.x + 46, p.y}, force="enemy"}; ft_target.health = 1; local doomed = surface.create_entity{name="gun-turret", position={p.x + 80, p.y}, force="player"}; doomed.health = 1; surface.create_entity{name="behemoth-biter", position={p.x + 84, p.y}, force="enemy"}; local spawner = surface.create_entity{name="biter-spawner", position={p.x - 40, p.y}, force="enemy"}; spawner.health = 1; local ok, worm = pcall(function() return surface.create_entity{name="medium-worm-turret", position={p.x - 46, p.y}, force="enemy"} end); if ok and worm then worm.health = 1 end
 ```
 **Action:** Land one hit each on the spawner and the worm (if it was
 created - not all versions ship "medium-worm-turret") - both sit well
@@ -181,12 +177,13 @@ after that for the flamethrower's fire patch to fade.
 Laser turrets need electricity to fire, which this scripted setup doesn't
 wire up (see the not-covered-yet note below) - the gun and flamethrower
 turrets above are ammo/fluid-powered, not electric, so they don't need
-it. Whether a freshly-created, ammo-loaded turret actually starts firing
-on its own the moment a target comes into range - or needs something
-else set first - is still an open question; the last two real runs of
-this step produced turret kills/destruction but no turret-dealt
-`damage_event`, which is exactly the kind of gap this step is meant to
-surface, not paper over.
+it. A turret should just fire at anything hostile in range once it has
+ammo - the last two real runs produced turret kills/destruction but no
+turret-dealt `damage_event`, so this round switches the gun turret's ammo
+insert from the generic `.insert{}` convenience method to explicitly
+inserting into `defines.inventory.turret_ammo`, in case that's the actual
+gap. If this run still shows no turret-dealt damage, that's worth
+reporting back rather than assumed fixed.
 
 ## 9. Spitter acid (isolated fight)
 
@@ -371,6 +368,13 @@ Noted rather than silently skipped:
   position/target-resolution properties rather than anything requiring
   power to be flowing - but it's unconfirmed whether that holds for
   everything else these unpowered entities are asked to do here.
-* **Battlefield visual marker** - see step 7's note above; needs a real
-  mod feature (auto-tracking active zones, non-destructive rendering) in
-  place of the removed one-off concrete-ring command.
+* **Diagnostics timings are currently unusable** - `LuaProfiler` doesn't
+  expose raw time values to Lua at all (confirmed in the real API docs);
+  it's only usable as a `LocalisedString` (`game.print`, `log()`, GUI
+  text), not via `tostring()`, concatenation, or any other route into a
+  plain Lua string or number. `diagnostics_tick` events currently log the
+  literal string `"[LuaProfiler]"` for every field as a result -
+  worthless for the min/p50/mean/p95/max breakdown `tools/inspect_replay.py`
+  tries to build from them. Needs a real design change (see the open PR
+  description), not another guess at extracting a value that the engine
+  deliberately doesn't hand to scripts.
