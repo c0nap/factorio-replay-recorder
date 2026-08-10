@@ -105,5 +105,14 @@ data:extend({
         setting_type = "runtime-global",
         default_value = false,
         order = "l"
+    },
+    {
+        type = "int-setting",
+        name = "rrec-max-buffered-events",
+        setting_type = "runtime-global",
+        default_value = 25,
+        minimum_value = 1,
+        maximum_value = 1000,
+        order = "m"
     }
 })

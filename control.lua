@@ -97,8 +97,16 @@ script.on_event(defines.events.on_tick, function()
 
     Diagnostics.end_scan(diag)
 
+    -- Flushes on the fixed interval as usual, but also early whenever the
+    -- buffer has grown past Config.max_buffered_events() - e.g. during a
+    -- full-recording backfill burst, where 20 chunk_snapshot events/tick
+    -- would otherwise all pile up for a full flush_interval_ticks before
+    -- the first flush call ever ran. Exporter.flush() itself caps how much
+    -- it writes per call to that same limit, so this can fire on
+    -- consecutive ticks to drain a large backlog in several small writes
+    -- instead of waiting one at a time.
     local write_profiler = nil
-    if game.tick % Config.flush_interval_ticks() == 0 then
+    if game.tick % Config.flush_interval_ticks() == 0 or #storage.replay_buffer >= Config.max_buffered_events() then
         write_profiler = Diagnostics.start_write(diag)
         Exporter.flush()
         if write_profiler then write_profiler.stop() end

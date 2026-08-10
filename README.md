@@ -41,7 +41,8 @@ All settings live under *Settings > Mod Settings > Map* and can be changed witho
 | Chain max hops | 30 | Absolute limit on how far a belt/inserter chain walk follows outward from a zone, near or far. |
 | Inserter search radius | 3 tiles | How far to search around a chest for inserters that service it (chests have no "what's connected to me" query of their own). The radius only narrows the search - matches are confirmed via each candidate's exact `pickup_target`/`drop_target`, so a too-large radius costs a little performance, not correctness. |
 | Chunk backfill per tick | 20 chunks | When full recording mode turns on with already-generated chunks in the save, how many of them get scanned and captured per tick while catching up. Lower spreads the catch-up out over more ticks (smoother, slower to finish); higher finishes faster at the cost of more work per tick. See [Full Recording Mode](#full-recording-mode-performance) below. |
-| Flush interval | 1 second | How often the buffered event queue gets serialized and written to `replay.json`. Larger values batch more events into fewer, bigger writes; smaller values write more often in smaller chunks. |
+| Flush interval | 1 second | How often the buffered event queue gets serialized and written to `replay.json`, at most - see "Max buffered events" below for the other trigger. Larger values batch more events into fewer, bigger writes; smaller values write more often in smaller chunks. |
+| Max buffered events | 25 events | Caps how many buffered events a single flush serializes+writes, and triggers an early flush - before the flush interval above is even up - once the buffer grows past this size. See [Full Recording Mode](#full-recording-mode-performance) below. |
 | Full recording mode | Off | Disables cropping and records every generated chunk continuously. **Produces enormous files** (potentially gigabytes per hour) - meant for short recordings or debugging, not routine play. |
 | Diagnostics enabled | Off | Writes per-tick timing to Factorio's own log file, not `replay.json` (see [Performance diagnostics](#performance-diagnostics) below). |
 | Battlefield marker enabled | Off | Draws a cyan line around the exterior perimeter of whatever chunks are currently recording (see [Battlefield marker](#battlefield-marker) below). A no-op under full recording mode. |
@@ -52,15 +53,28 @@ If you don't write Lua and just want to tune how aggressively replays are croppe
 
 Turning full recording mode on mid-save backfills every already-generated
 chunk, not just new ones - captured gradually via the "chunk backfill per
-tick" setting above rather than all at once. A save with hundreds or
-thousands of existing chunks used to scan and dump every one of them
-synchronously in the single tick the setting changed, which was enough
-engine-call overhead alone to freeze the game for several seconds; the
-backfill queue spreads that same total cost across many ticks instead, at
-20 chunks/tick by default. New chunks generated after that (walking into
-unexplored territory) are still captured immediately, one at a time, as
-they generate - only the initial catch-up over *existing* chunks is
-queued.
+tick" setting above (20 chunks/tick by default) rather than all at once,
+so the scanning itself (tiles/statics/logistics per chunk) doesn't freeze
+the game the way it originally did.
+
+That fixed the scan side, but a real diagnostics run (see [Performance
+diagnostics](#performance-diagnostics)) showed a second, separate freeze
+downstream of it: every one of those ~800 scanned chunks queues a full
+`chunk_snapshot` event, and `Exporter.flush()` used to write the *entire*
+buffered queue in one call regardless of size - one single flush call took
+**8.3 seconds** on that run, dwarfing the scan cost (which stayed under
+20ms per tick the whole time). It's IO-bound, not scan-bound: the backfill
+finishes queuing all ~800 chunks well before the first fixed-interval
+flush would even fire, so that first flush had the entire backlog to
+write in one shot.
+
+"Max buffered events" fixes this directly: `Exporter.flush()` now writes
+at most that many entries per call (oldest first), and `control.lua`
+flushes early - not just on the fixed interval - the moment the buffer
+crosses that same size. A large backlog drains as several small, bounded
+writes instead of one massive one. New chunks generated after the initial
+backfill (walking into unexplored territory) are still captured
+immediately, one at a time, as they generate.
 
 ### Performance diagnostics
 

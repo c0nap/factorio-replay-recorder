@@ -96,4 +96,16 @@ function Config.battlefield_marker_enabled()
     return settings.global["rrec-battlefield-marker-enabled"].value
 end
 
+-- Caps how many entries Exporter.flush() serializes+writes in a single
+-- call, and (see control.lua's on_tick) triggers an early flush once
+-- storage.replay_buffer crosses this size rather than waiting for the
+-- next fixed-interval flush. Confirmed via real diagnostics data (not a
+-- guess) that a single flush call writing an unbounded backlog - e.g. the
+-- ~800 chunk_snapshot events a full-recording backfill burst can queue up
+-- before the first flush even fires - is what actually froze the game for
+-- multiple seconds, not the backfill's own per-chunk scanning.
+function Config.max_buffered_events()
+    return settings.global["rrec-max-buffered-events"].value
+end
+
 return Config
