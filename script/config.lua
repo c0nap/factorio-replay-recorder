@@ -89,4 +89,11 @@ function Config.diagnostics_enabled()
     return settings.global["rrec-diagnostics-enabled"].value
 end
 
+-- Gates script/battlefield_marker.lua's exterior-perimeter overlay. Off
+-- by default - it's a visual aid for manual testing, not something a
+-- routine recording needs running.
+function Config.battlefield_marker_enabled()
+    return settings.global["rrec-battlefield-marker-enabled"].value
+end
+
 return Config

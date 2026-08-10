@@ -136,6 +136,7 @@ CHECKS = [
     ("chunk_snapshot has non-empty statics", "8", check_statics_nonempty),
     ("chunk_snapshot has non-empty tiles", "1-2", check_tiles_nonempty),
     ("chunk_snapshot has a non-empty logistics roster", "4", check_logistics_nonempty),
+    ("zone_created recorded", "1-2", present("zone_created")),
     ("zone_expired recorded", "6", present("zone_expired")),
     ("mobile_positions recorded", "1-2", present("mobile_positions")),
     ("death_event recorded", "8", present("death_event")),

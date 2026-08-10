@@ -18,6 +18,11 @@ the mod already wrote. Standard library only, no dependencies to install.
 For a pass/fail check against a specific test scenario (docs/testing-
 checklist.md), use tools/verify_checklist.py instead - this script is a
 general-purpose summary, not a test runner.
+
+For per-tick performance timings (rrec-diagnostics-enabled), see
+tools/inspect_logs.py instead - those are written to Factorio's own log
+file, not to replay.json (LuaProfiler can't hand a raw duration value to
+Lua for embedding in a JSON event; see script/diagnostics.lua).
 """
 
 import argparse
@@ -31,23 +36,6 @@ import sys
 CHUNK_SIZE = 32
 TICKS_PER_SECOND = 60
 CHUNK_ID_RE = re.compile(r"^(.*)_(-?\d+)_(-?\d+)$")
-
-# LuaProfiler's only reliably-documented output is its human-readable
-# string form ("5.432 ms", "820 µs", ...) - script/diagnostics.lua logs
-# that string as-is rather than guessing at an unconfirmed numeric
-# accessor, so this is the parsing side of that tradeoff. Handles the
-# ASCII "us" spelling too, since which micro-sign byte a given Factorio
-# build/locale prints isn't something worth gambling a regex on.
-DURATION_RE = re.compile(r"^([\d.]+)\s*(ns|us|µs|μs|ms|s)?$")
-DURATION_UNIT_TO_MS = {
-    "ns": 1e-6,
-    "us": 1e-3,
-    "µs": 1e-3,
-    "μs": 1e-3,
-    "ms": 1.0,
-    "s": 1000.0,
-    None: 1.0,
-}
 
 
 def default_replay_path():
@@ -315,7 +303,6 @@ def summarize(events, malformed, sample_limit, only_type):
     _summarize_owner_kinds(events)
     _summarize_scores(events)
     _summarize_kills(events)
-    _summarize_diagnostics(events)
 
     types_to_sample = [only_type] if only_type else [t for t, _ in counts.most_common()]
     print("\nSample payloads:")
@@ -354,87 +341,6 @@ def _summarize_scores(events):
         print("\nScoreboard (latest deaths_this_force per force):")
         for force, deaths in latest_by_force.items():
             print(f"  {force}: {deaths}")
-
-
-def _parse_duration_ms(text):
-    """Parses a LuaProfiler-style duration string ("5.432 ms") into a float
-    number of milliseconds, or None if it doesn't match the expected shape -
-    callers should count and report unparsed samples rather than silently
-    dropping them, since a format this script doesn't recognize is itself
-    useful information."""
-    if not isinstance(text, str):
-        return None
-    match = DURATION_RE.match(text.strip())
-    if not match:
-        return None
-    value = float(match.group(1))
-    return value * DURATION_UNIT_TO_MS[match.group(2)]
-
-
-def _duration_stats(values_ms):
-    if not values_ms:
-        return None
-    ordered = sorted(values_ms)
-    n = len(ordered)
-
-    def percentile(p):
-        return ordered[min(n - 1, int(p * n))]
-
-    return {
-        "count": n,
-        "min": ordered[0],
-        "max": ordered[-1],
-        "mean": sum(ordered) / n,
-        "p50": percentile(0.50),
-        "p95": percentile(0.95),
-    }
-
-
-def _summarize_diagnostics(events):
-    """Breaks diagnostics_tick events (only present when the
-    rrec-diagnostics-enabled setting was on for the recording) down into
-    per-field timing statistics, so a save that's still stalling can show
-    real numbers instead of a guess at what's slow."""
-    buckets = {"tick_time": [], "scan_time": [], "write_time": []}
-    unparsed = 0
-
-    for e in events:
-        if e.get("type") != "diagnostics_tick":
-            continue
-        data = e.get("data", {})
-        for field, bucket in buckets.items():
-            text = data.get(field)
-            if text is None:
-                continue
-            ms = _parse_duration_ms(text)
-            if ms is None:
-                unparsed += 1
-            else:
-                bucket.append(ms)
-
-    if not any(buckets.values()):
-        return
-
-    labels = {
-        "tick_time": "tick (whole on_tick handler)",
-        "scan_time": "scan (CombatZones/Tracker/Logistics/ItemChains/FluidChains)",
-        "write_time": "write (Exporter.flush - only present on flush ticks)",
-    }
-    print("\nDiagnostics (per-tick timings, milliseconds):")
-    for field, label in labels.items():
-        stats = _duration_stats(buckets[field])
-        if not stats:
-            continue
-        print(f"  {label}:")
-        print(
-            f"    samples={stats['count']}  min={stats['min']:.3f}  p50={stats['p50']:.3f}  "
-            f"mean={stats['mean']:.3f}  p95={stats['p95']:.3f}  max={stats['max']:.3f}"
-        )
-    if unparsed:
-        print(
-            f"  ({unparsed} timing string(s) didn't match the expected LuaProfiler "
-            "format - worth pasting a raw sample if this shows up)"
-        )
 
 
 def _summarize_kills(events):

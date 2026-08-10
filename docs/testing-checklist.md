@@ -41,15 +41,28 @@ second time as a misfire guard - just run the same line again if nothing
 seems to happen. Cheat mode is worth its own line since you'll type it
 twice either way.
 ```
-/c game.player.force.research_all_technologies(); game.speed=3; settings.global["rrec-distant-sample-interval-seconds"] = {value = 1}; settings.global["rrec-chain-near-hops"] = {value = 1}; settings.global["rrec-chain-max-hops"] = {value = 50}; settings.global["rrec-diagnostics-enabled"] = {value = true}
+/c game.player.force.research_all_technologies(); game.speed=3; settings.global["rrec-distant-sample-interval-seconds"] = {value = 1}; settings.global["rrec-chain-near-hops"] = {value = 1}; settings.global["rrec-chain-max-hops"] = {value = 50}; settings.global["rrec-diagnostics-enabled"] = {value = true}; settings.global["rrec-battlefield-marker-enabled"] = {value = true}
 ```
 Speeds up the slow-sample systems (logistics/item/fluid chains normally
 sample every 5s; this drops it to 1s) and sets the near/far chain split so
 a single hop already counts as "far" - makes the rollup steps below
 produce visible results without needing a huge base. Also turns on the
-optional per-tick performance timings (`diagnostics_tick` events) so
-`tools/inspect_replay.py` has real numbers to summarize afterward - see
-its "Diagnostics" section in the output.
+optional per-tick performance timings and the in-game battlefield
+perimeter marker (a cyan line traced around the exterior edge of whatever
+chunks are currently recording - see step 7).
+
+The performance timings don't go into `replay.json` - `LuaProfiler`
+can't hand a raw duration value back to Lua at all, only to things like
+`game.print()`/`log()`, so they're written straight to Factorio's own log
+file instead. Find it at:
+* **Windows:** `%APPDATA%\Factorio\factorio-current.log`
+* **macOS:** `~/Library/Application Support/factorio/factorio-current.log`
+* **Linux:** `~/.factorio/factorio-current.log`
+
+and summarize it the same way as the other tools, after you're done:
+```
+python3 tools/inspect_logs.py
+```
 
 ## 2. Long-chain rollup via belts (`item_distribution`)
 
@@ -90,11 +103,14 @@ providers/requesters. Same boundary-straddling idea as step 3: the
 roboport sits just inside its chunk, its chests just outside it.
 
 ```
-/c local surface = game.player.surface; local base = game.player.position; local ccx = math.floor(base.x / 32) * 32; local ccy = math.floor((base.y - 96) / 32) * 32; local rp = surface.create_entity{name = "roboport", position = {ccx + 31, ccy + 16}, force = "player"}; rp.insert{name = "construction-robot", count = 2}; local provider = surface.create_entity{name = "logistic-chest-passive-provider", position = {ccx + 34, ccy + 16}, force = "player"}; provider.get_inventory(defines.inventory.chest).insert{name = "iron-plate", count = 20}; local requester = surface.create_entity{name = "logistic-chest-requester", position = {ccx + 37, ccy + 16}, force = "player"}; local b = surface.create_entity{name = "small-biter", position = {ccx + 31, ccy + 15}, force = "enemy"}; b.die()
+/c local surface = game.player.surface; local base = game.player.position; local ccx = math.floor(base.x / 32) * 32; local ccy = math.floor((base.y - 96) / 32) * 32; local rp = surface.create_entity{name = "roboport", position = {ccx + 31, ccy + 16}, force = "player"}; rp.insert{name = "construction-robot", count = 2}; local provider = surface.create_entity{name = "passive-provider-chest", position = {ccx + 34, ccy + 16}, force = "player"}; provider.get_inventory(defines.inventory.chest).insert{name = "iron-plate", count = 20}; local requester = surface.create_entity{name = "requester-chest", position = {ccx + 37, ccy + 16}, force = "player"}; local b = surface.create_entity{name = "small-biter", position = {ccx + 31, ccy + 15}, force = "enemy"}; b.die()
 ```
 Wait a couple of seconds. If the provider chest doesn't show up in the
 network roster, the roboport's construction range doesn't reach as far as
 assumed here - move the chests closer to the roboport and re-run.
+Roboports need electricity to actually operate (charge/dispatch robots),
+which this scripted setup doesn't wire up - see the not-covered-yet note
+below. The roster/reachability checks above don't depend on that.
 
 ## 5. Distant fluid chain
 
@@ -119,22 +135,26 @@ at least 50 tiles from where step 2's biter died, then wait ~15 real
 seconds without any further combat there (`/c game.speed=5` first if
 you'd rather not wait; reset with `/c game.speed=3` after).
 
-## 7. Full recording mode + battlefield marker
+## 7. Full recording mode
 
 Tests: every chunk gets recorded regardless of nearby combat once this is
-on. Also lays a visible concrete ring around your current chunk so you
-have an obvious "this is the battlefield" landmark for the rest of the
-list instead of needing to remember coordinates.
+on.
 
 ```
 /c settings.global["rrec-full-recording-mode"] = {value = true}
 ```
-```
-/c local surface = game.player.surface; local cx = math.floor(game.player.position.x / 32) * 32; local cy = math.floor(game.player.position.y / 32) * 32; local ring = {}; for i = 0, 31 do table.insert(ring, {name = "concrete", position = {cx + i, cy}}); table.insert(ring, {name = "concrete", position = {cx + i, cy + 31}}); table.insert(ring, {name = "concrete", position = {cx, cy + i}}); table.insert(ring, {name = "concrete", position = {cx + 31, cy + i}}) end; surface.set_tiles(ring)
-```
-**Action:** Walk inside the concrete ring you just drew - that's your
-battlefield chunk for every step below. Everything records regardless of
-nearby combat from here on, so you don't need to babysit zone activity.
+**Action:** Walk into a chunk you haven't touched yet, where nothing is
+fighting - just stand there a couple of seconds. Everything records
+regardless of nearby combat from here on, so you don't need to babysit
+zone activity for the rest of this list.
+
+If you turned on the battlefield marker in step 1, you'll notice its cyan
+outline disappears the moment full recording mode comes on - that's by
+design, not a bug: every chunk is "the zone" under full recording, so a
+border around everything would be meaningless. It was tracing the
+exterior perimeter of whatever chunks were actively recording during
+steps 2-6; there's nothing left to outline once that distinction goes
+away.
 
 ## 8. Turrets: damage, kills, and destruction
 
@@ -149,21 +169,33 @@ targets and turrets placed well apart so each only ever fights its own
 target - no precision combat needed, just place, wait, and watch.
 
 ```
-/c local p = game.player.position; local surface = game.player.surface; game.player.insert{name="stone-wall", count=5}; game.player.insert{name="gate", count=2}; local gt = surface.create_entity{name="gun-turret", position={p.x, p.y}, force="player"}; gt.insert{name="firearm-magazine", count=10}; local gt_target = surface.create_entity{name="small-biter", position={p.x + 6, p.y}, force="enemy"}; gt_target.health = 1; local ft = surface.create_entity{name="flamethrower-turret", position={p.x + 40, p.y}, force="player"}; ft.insert_fluid{name="crude-oil", amount=100}; local ft_target = surface.create_entity{name="small-biter", position={p.x + 46, p.y}, force="enemy"}; ft_target.health = 1; local doomed = surface.create_entity{name="gun-turret", position={p.x + 80, p.y}, force="player"}; doomed.health = 1; surface.create_entity{name="behemoth-biter", position={p.x + 84, p.y}, force="enemy"}; local spawner = surface.create_entity{name="biter-spawner", position={p.x - 40, p.y}, force="enemy"}; spawner.health = 1; local ok, worm = pcall(function() return surface.create_entity{name="medium-worm-turret", position={p.x - 46, p.y}, force="enemy"} end); if ok and worm then worm.health = 1 end
+/c game.player.insert{name="stone-wall", count=5}; game.player.insert{name="gate", count=2}
 ```
 **Action:** Place the wall and gate anywhere nearby (just needs to exist
-in the chunk snapshot). Land one hit each on the spawner and the worm (if
-it was created - not all versions ship "medium-worm-turret") - both sit
-well away from everything else, so there's nothing to accidentally kill
+in the chunk snapshot) - nothing hostile exists yet, so there's no rush.
+Once they're down, run the next command.
+
+```
+/c local p = game.player.position; local surface = game.player.surface; local gt = surface.create_entity{name="gun-turret", position={p.x, p.y}, force="player"}; gt.get_inventory(defines.inventory.turret_ammo).insert{name="firearm-magazine", count=10}; local gt_target = surface.create_entity{name="small-biter", position={p.x + 6, p.y}, force="enemy"}; gt_target.health = 1; local ft = surface.create_entity{name="flamethrower-turret", position={p.x + 40, p.y}, force="player"}; ft.insert_fluid{name="crude-oil", amount=100}; local ft_target = surface.create_entity{name="small-biter", position={p.x + 46, p.y}, force="enemy"}; ft_target.health = 1; local doomed = surface.create_entity{name="gun-turret", position={p.x + 80, p.y}, force="player"}; doomed.health = 1; surface.create_entity{name="behemoth-biter", position={p.x + 84, p.y}, force="enemy"}; local spawner = surface.create_entity{name="biter-spawner", position={p.x - 40, p.y}, force="enemy"}; spawner.health = 1; local ok, worm = pcall(function() return surface.create_entity{name="medium-worm-turret", position={p.x - 46, p.y}, force="enemy"} end); if ok and worm then worm.health = 1 end
+```
+**Action:** Land one hit each on the spawner and the worm (if it was
+created - not all versions ship "medium-worm-turret") - both sit well
+away from everything else, so there's nothing to accidentally kill
 alongside them. Then wait ~10 seconds - the gun turret and flamethrower
 turret each kill their own one-hit-point target on their own, and the
 behemoth destroys the one-hit-point turret. Wait a further ~10 seconds
 after that for the flamethrower's fire patch to fade.
 
 Laser turrets need electricity to fire, which this scripted setup doesn't
-wire up - the gun and flamethrower turrets above already exercise
-turret-dealt damage/kills/destruction, so a laser turret isn't required
-here. Add one with your own power source if you want the extra coverage.
+wire up (see the not-covered-yet note below) - the gun and flamethrower
+turrets above are ammo/fluid-powered, not electric, so they don't need
+it. A turret should just fire at anything hostile in range once it has
+ammo - the last two real runs produced turret kills/destruction but no
+turret-dealt `damage_event`, so this round switches the gun turret's ammo
+insert from the generic `.insert{}` convenience method to explicitly
+inserting into `defines.inventory.turret_ammo`, in case that's the actual
+gap. If this run still shows no turret-dealt damage, that's worth
+reporting back rather than assumed fixed.
 
 ## 9. Spitter acid (isolated fight)
 
@@ -172,7 +204,7 @@ fight rather than a scripted one-shot - split out on its own so it's not
 competing with the turret setup above.
 
 ```
-/c local p = game.player.position; game.player.surface.create_entity{name="small-spitter", position={p.x + 120, p.y}, force="enemy"}
+/c local p = game.player.position; game.player.surface.create_entity{name="small-spitter", position={p.x + 12, p.y}, force="enemy"}
 ```
 **Action:** Walk over and fight it normally - let it get a couple of acid
 hits in on you before it dies. Wait ~10 seconds afterward for the acid
@@ -185,20 +217,30 @@ damaging/killing an enemy, a vehicle being damaged and destroyed, and an
 unmanned autopilot spidertron still counting as player-controlled.
 
 ```
-/c local p = game.player.position; local surface = game.player.surface; game.player.insert{name="car", count=1}; game.player.insert{name="tank", count=1}; game.player.insert{name="solid-fuel", count=20}; game.player.insert{name="firearm-magazine", count=40}; game.player.insert{name="cannon-shell", count=10}; local prey = surface.create_entity{name="small-biter", position={p.x + 10, p.y + 5}, force="enemy"}; prey.health = 1; local weak_car = surface.create_entity{name="car", position={p.x + 20, p.y}, force="player"}; weak_car.health = 1; surface.create_entity{name="behemoth-biter", position={p.x + 24, p.y}, force="enemy"}
+/c local surface = game.player.surface; game.player.insert{name="car", count=1}; game.player.insert{name="tank", count=1}; game.player.insert{name="solid-fuel", count=20}; game.player.insert{name="firearm-magazine", count=40}; game.player.insert{name="cannon-shell", count=10}
 ```
-**Action:** Place the car and tank, fuel one with the solid-fuel, load
-ammo into its trunk, and either shoot or drive over `prey` (the
-one-health biter) - this is the one vehicle action that needs to be done
-live, since running someone over isn't something worth scripting around.
-The `weak_car`/behemoth pair destroys itself on its own; just wait ~5
-seconds for that one.
+**Action:** Place the car and tank, fuel one with the solid-fuel, and load
+ammo into its trunk - nothing hostile exists yet, so there's no rush.
+Once that's done, run the next command.
+
 ```
-/c local p = game.player.position; local surface = game.player.surface; local st = surface.create_entity{name="spidertron", position={p.x + 2, p.y}, force = game.player.force}; st.insert{name="firearm-magazine", count=20}; local target = surface.create_entity{name="small-biter", position={p.x + 30, p.y}, force="enemy"}; target.health = 1; st.autopilot_destination = {target.position.x, target.position.y}
+/c local p = game.player.position; local surface = game.player.surface; local prey = surface.create_entity{name="small-biter", position={p.x + 10, p.y + 5}, force="enemy"}; prey.health = 1; local weak_car = surface.create_entity{name="car", position={p.x + 20, p.y}, force="player"}; weak_car.health = 1; surface.create_entity{name="small-biter", position={p.x + 22, p.y}, force="enemy"}
+```
+**Action:** Either shoot or drive over `prey` (the one-health biter) -
+this is the one vehicle action that needs to be done live, since running
+someone over isn't something worth scripting around. `weak_car` is
+destroyed automatically by an ordinary small biter - a one-health car
+doesn't need a behemoth to kill it, and a behemoth spawned this close
+would just as easily turn on you instead. Wait ~5 seconds for that one.
+```
+/c local p = game.player.position; local surface = game.player.surface; local st = surface.create_entity{name="spidertron", position={p.x + 2, p.y}, force = game.player.force}; st.insert{name="rocket", count=20}; local target = surface.create_entity{name="small-biter", position={p.x + 30, p.y}, force="enemy"}; target.health = 1; st.autopilot_destination = {target.position.x, target.position.y}
 ```
 Sends an armed, unmanned spidertron on autopilot toward a weak biter -
 autopilot is what makes an empty spidertron still count as
-player-controlled for recording purposes. Wait ~5 seconds for it to
+player-controlled for recording purposes. Spidertrons fire rockets, not
+bullets, so it's loaded with `rocket` rather than firearm-magazine - if
+that item name is wrong for your game version, swap in whatever your
+spidertron's weapon slot actually accepts. Wait ~5 seconds for it to
 arrive and kill the target.
 
 ## 11. Player death, respawn, and corpse lifecycle
@@ -306,6 +348,13 @@ python3 tools/inspect_replay.py
 Both default to the standard Factorio `script-output` location for your
 OS; pass `--path` if that's wrong for your setup.
 
+If you turned on diagnostics in step 1, break down the per-tick timing
+data (written to Factorio's own log file, not `replay.json` - see step 1
+for why and exactly where to find it):
+```
+python3 tools/inspect_logs.py
+```
+
 ---
 
 ## Not covered by this checklist (future work)
@@ -330,7 +379,11 @@ Noted rather than silently skipped:
   `statics` if not filtered out. Their *contents* don't matter (they're
   obstacles, not storage), just their presence/position for pathing and
   chokepoint analysis.
-* **Laser turret power** - deliberately skipped in step 8 above (needs a
-  real electric network to fire, which isn't worth scripting for this
-  checklist); gun and flamethrower turrets already cover turret-dealt
-  damage/kills/destruction without it.
+* **Electricity** - laser turrets, (non-burner) inserters, pumps, and
+  roboports all need a real electric network to actually operate, which
+  this checklist doesn't wire up anywhere. Gun and flamethrower turrets
+  are ammo/fluid-powered so they're unaffected, and steps 3/4 (the
+  distant inserter and roboport tests) only depend on static
+  position/target-resolution properties rather than anything requiring
+  power to be flowing - but it's unconfirmed whether that holds for
+  everything else these unpowered entities are asked to do here.

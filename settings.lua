@@ -98,5 +98,12 @@ data:extend({
         setting_type = "runtime-global",
         default_value = false,
         order = "k"
+    },
+    {
+        type = "bool-setting",
+        name = "rrec-battlefield-marker-enabled",
+        setting_type = "runtime-global",
+        default_value = false,
+        order = "l"
     }
 })
