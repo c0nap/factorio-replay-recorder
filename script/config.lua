@@ -81,4 +81,12 @@ function Config.flush_interval_ticks()
     return math.max(1, math.floor(settings.global["rrec-flush-interval-seconds"].value * 60))
 end
 
+-- Gates script/diagnostics.lua's per-tick timing instrumentation. Off by
+-- default - the profiler brackets it wraps every tick with, and the extra
+-- diagnostics_tick event this produces every single tick, are only worth
+-- paying for while actively chasing a performance problem.
+function Config.diagnostics_enabled()
+    return settings.global["rrec-diagnostics-enabled"].value
+end
+
 return Config

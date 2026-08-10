@@ -43,6 +43,7 @@ All settings live under *Settings > Mod Settings > Map* and can be changed witho
 | Chunk backfill per tick | 20 chunks | When full recording mode turns on with already-generated chunks in the save, how many of them get scanned and captured per tick while catching up. Lower spreads the catch-up out over more ticks (smoother, slower to finish); higher finishes faster at the cost of more work per tick. See [Full Recording Mode](#full-recording-mode-performance) below. |
 | Flush interval | 1 second | How often the buffered event queue gets serialized and written to `replay.json`. Larger values batch more events into fewer, bigger writes; smaller values write more often in smaller chunks. |
 | Full recording mode | Off | Disables cropping and records every generated chunk continuously. **Produces enormous files** (potentially gigabytes per hour) - meant for short recordings or debugging, not routine play. |
+| Diagnostics enabled | Off | Logs a `diagnostics_tick` event every tick with per-tick timing (see [Performance diagnostics](#performance-diagnostics) below). Only worth turning on while actively chasing a performance problem - it adds a full extra event every single tick. |
 
 If you don't write Lua and just want to tune how aggressively replays are cropped, this is the only place you need to look - the settings menu is the supported way to change this mod's behavior, no code editing required.
 
@@ -59,6 +60,20 @@ backfill queue spreads that same total cost across many ticks instead, at
 unexplored territory) are still captured immediately, one at a time, as
 they generate - only the initial catch-up over *existing* chunks is
 queued.
+
+### Performance diagnostics
+
+Turning on "Diagnostics enabled" logs a `diagnostics_tick` event every
+tick with three timings, each measured via `game.create_profiler()`:
+`tick_time` (the whole `on_tick` handler), `scan_time` (everything except
+the JSON write - `CombatZones`/`Tracker`/`Logistics`/`ItemChains`/
+`FluidChains`), and `write_time` (`Exporter.flush()` alone, present only
+on ticks where a flush actually happened). This doesn't fix anything by
+itself - it exists to answer "is a stall scan-bound or IO-bound" with real
+numbers instead of a guess. `tools/inspect_replay.py` breaks the recorded
+timings down into min/p50/mean/p95/max automatically; see its
+"Diagnostics" section. Leave this off for normal recording - it adds a
+full extra event every single tick.
 
 ## Output Format
 
@@ -85,6 +100,7 @@ Data is exported to Factorio's `script-output/replay.json` as newline-delimited 
 | `ground_item_created` | A player manually drops an item on the ground | `owner` (`ground_item_<id>`, the same key its `inventory_delta` uses), position, `player_index` |
 | `ground_item_removed` | A tracked ground item is picked up, mined, or destroyed | `owner` (`ground_item_<id>`) |
 | `zone_expired` | A chunk stops recording after its timeout | Chunk id |
+| `diagnostics_tick` | Every tick, only while the "Diagnostics enabled" setting is on | `tick_time`, `scan_time`, and (flush ticks only) `write_time` - each a `LuaProfiler`-formatted duration string (e.g. `"1.234 ms"`), not a raw number - see [Performance diagnostics](#performance-diagnostics) above |
 
 **Cross-referencing item location and motion:** there's no dedicated "item moved" event. An item owned by a player, vehicle, or robot shows up under that owner's `inventory_delta` (`owner_kind` = `player`/`vehicle`/`robot`), and that same owner's position is in every `mobile_positions` update (matched by `id`/`owner`). To know where a player's ammo physically is at tick T, look up their position in `mobile_positions` at T - the two streams are deliberately kept separate (position every tick is cheap and needed for combat rendering regardless of inventory; inventory only needs to be emitted when it actually changes) rather than duplicating position onto every item event.
 
