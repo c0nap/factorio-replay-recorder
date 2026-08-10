@@ -99,6 +99,7 @@ Data is exported to Factorio's `script-output/replay.json` as newline-delimited 
 | `corpse_expired` | A player corpse times out or is fully looted | `owner` (`corpse_<id>`) |
 | `ground_item_created` | A player manually drops an item on the ground | `owner` (`ground_item_<id>`, the same key its `inventory_delta` uses), position, `player_index` |
 | `ground_item_removed` | A tracked ground item is picked up, mined, or destroyed | `owner` (`ground_item_<id>`) |
+| `zone_created` | A chunk starts recording for the first time (not re-logged on every later hit that just extends its timeout) | Chunk id |
 | `zone_expired` | A chunk stops recording after its timeout | Chunk id |
 | `diagnostics_tick` | Every tick, only while the "Diagnostics enabled" setting is on | `tick_time`, `scan_time`, and (flush ticks only) `write_time` - each a `LuaProfiler`-formatted duration string (e.g. `"1.234 ms"`), not a raw number - see [Performance diagnostics](#performance-diagnostics) above |
 

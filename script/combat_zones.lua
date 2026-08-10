@@ -233,6 +233,7 @@ end
 
 local function activate_zone(surface, chunk_x, chunk_y)
     local id = chunk_id(surface, chunk_x, chunk_y)
+    local is_new = storage.active_zones[id] == nil
     ensure_known(surface, chunk_x, chunk_y)
 
     storage.active_zones[id] = {
@@ -241,6 +242,14 @@ local function activate_zone(surface, chunk_x, chunk_y)
         chunk_y = chunk_y,
         expires_at = game.tick + Config.zone_timeout_ticks()
     }
+
+    -- Only on the chunk's first activation, not every subsequent hit that
+    -- just extends its timeout - mirrors zone_expired's one-shot-per-chunk
+    -- shape, so a viewer can bracket a zone's whole active lifetime from
+    -- these two events without also seeing one zone_created per hit.
+    if is_new then
+        Exporter.log_event(game.tick, "zone_created", {chunk_id = id})
+    end
 end
 
 -- Called whenever something combat-relevant happens (a hit, a death, a
