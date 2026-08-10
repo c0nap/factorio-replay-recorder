@@ -33,20 +33,21 @@ import sys
 # other mod) writes to the same log file.
 LOG_MARKER = "[replay-recorder-diagnostics]"
 
-# A LuaProfiler embedded in a LocalisedString resolves to a human-readable
-# duration like "5.432 ms" or "820 µs" - restricting the unit to a known
-# token list (rather than a generic "rest of the word") avoids a duration
-# with no unit at all (e.g. a bare "0") accidentally swallowing the next
-# field's key into its own capture.
+# A LuaProfiler embedded in a LocalisedString resolves to text of the form
+# "Duration: 0.085300ms" - confirmed against a real log sample, not
+# guessed: the literal "Duration: " prefix, and no space between the
+# number and its unit. Restricting the unit to a known token list (rather
+# than a generic "rest of the word") avoids swallowing the next field's
+# key into this one's capture.
 UNIT = r"(?:ns|us|µs|μs|ms|s)"
-DURATION = rf"[\d.]+(?:\s*{UNIT})?"
+DURATION = rf"Duration:\s*[\d.]+\s*{UNIT}"
 FIELD_RE = re.compile(
     rf"tick=(?P<tick>\d+)"
     rf"\s+tick_time=(?P<tick_time>{DURATION})"
     rf"\s+scan_time=(?P<scan_time>{DURATION})"
     rf"(?:\s+write_time=(?P<write_time>{DURATION}))?"
 )
-DURATION_RE = re.compile(r"^([\d.]+)\s*(ns|us|µs|μs|ms|s)?$")
+DURATION_RE = re.compile(rf"^Duration:\s*([\d.]+)\s*({UNIT})$")
 DURATION_UNIT_TO_MS = {
     "ns": 1e-6,
     "us": 1e-3,
@@ -151,9 +152,17 @@ def print_report(samples, malformed):
     print("=" * 70)
 
     if not samples:
-        print("No diagnostics lines found. Either the recording you're")
-        print("inspecting didn't have rrec-diagnostics-enabled turned on,")
-        print("or --path isn't pointing at the right log file.")
+        if malformed:
+            # The marker was found, just not in the shape FIELD_RE expects -
+            # a real format mismatch worth surfacing precisely, not the
+            # generic "nothing here" message below.
+            print(f"Found {malformed} line(s) with the diagnostics marker, but none")
+            print("matched the expected field format. Factorio's LuaProfiler text")
+            print("may have changed shape - paste a raw sample line if this shows up.")
+        else:
+            print("No diagnostics lines found. Either the recording you're")
+            print("inspecting didn't have rrec-diagnostics-enabled turned on,")
+            print("or --path isn't pointing at the right log file.")
         return
 
     ticks = [s["tick"] for s in samples]
