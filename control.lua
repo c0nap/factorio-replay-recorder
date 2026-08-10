@@ -53,7 +53,7 @@ script.on_event(defines.events.on_runtime_mod_setting_changed, function(event)
     if event.setting ~= "rrec-full-recording-mode" then return end
 
     if Config.full_recording_mode() then
-        CombatZones.activate_all_existing_chunks()
+        CombatZones.queue_full_recording_backfill()
     else
         -- Switching back to cropped mode: zones full recording opened stay
         -- open forever otherwise, since they were marked permanent instead
@@ -63,10 +63,13 @@ script.on_event(defines.events.on_runtime_mod_setting_changed, function(event)
     end
 end)
 
--- Main Loop. Factorio runs at 60 ticks/second, so this is once a second.
-local FLUSH_INTERVAL_TICKS = 60
-
+-- Main Loop. Factorio runs at 60 ticks/second.
 script.on_event(defines.events.on_tick, function()
+    -- Drains a bounded number of chunks/tick from full recording mode's
+    -- backfill queue (see CombatZones.queue_full_recording_backfill) - a
+    -- no-op cost once the queue is empty, which is the common case.
+    CombatZones.process_backfill_queue()
+
     CombatZones.tick()
     Tracker.tick()
 
@@ -88,7 +91,7 @@ script.on_event(defines.events.on_tick, function()
         FluidChains.tick(storage.active_zones, CombatZones.chunk_area)
     end
 
-    if game.tick % FLUSH_INTERVAL_TICKS == 0 then
+    if game.tick % Config.flush_interval_ticks() == 0 then
         Exporter.flush()
     end
 end)

@@ -56,6 +56,12 @@ local function ensure_storage()
     -- watching. Entries are removed once on_object_destroyed fires for them.
     storage.registered_ground_items = storage.registered_ground_items or {}
 
+    -- Full recording mode's backfill queue: an array of {surface, chunk_x,
+    -- chunk_y} entries for already-generated chunks still waiting to be
+    -- activated, drained a bounded number per tick by
+    -- CombatZones.process_backfill_queue() - see script/combat_zones.lua.
+    storage.pending_backfill = storage.pending_backfill or {}
+
     -- Was written every time a biter unit group formed but never actually
     -- read back anywhere; dropping it stops it from growing forever across
     -- a long save. Explicitly cleared here so saves from before this fix

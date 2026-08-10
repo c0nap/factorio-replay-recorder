@@ -40,9 +40,25 @@ All settings live under *Settings > Mod Settings > Map* and can be changed witho
 | Chain near hops | 5 | Belt/inserter chain hops within this distance of a zone get exact per-entity tracking; beyond it, they're rolled up into a compact summary instead. |
 | Chain max hops | 30 | Absolute limit on how far a belt/inserter chain walk follows outward from a zone, near or far. |
 | Inserter search radius | 3 tiles | How far to search around a chest for inserters that service it (chests have no "what's connected to me" query of their own). The radius only narrows the search - matches are confirmed via each candidate's exact `pickup_target`/`drop_target`, so a too-large radius costs a little performance, not correctness. |
+| Chunk backfill per tick | 20 chunks | When full recording mode turns on with already-generated chunks in the save, how many of them get scanned and captured per tick while catching up. Lower spreads the catch-up out over more ticks (smoother, slower to finish); higher finishes faster at the cost of more work per tick. See [Full Recording Mode](#full-recording-mode-performance) below. |
+| Flush interval | 1 second | How often the buffered event queue gets serialized and written to `replay.json`. Larger values batch more events into fewer, bigger writes; smaller values write more often in smaller chunks. |
 | Full recording mode | Off | Disables cropping and records every generated chunk continuously. **Produces enormous files** (potentially gigabytes per hour) - meant for short recordings or debugging, not routine play. |
 
 If you don't write Lua and just want to tune how aggressively replays are cropped, this is the only place you need to look - the settings menu is the supported way to change this mod's behavior, no code editing required.
+
+### Full recording mode performance
+
+Turning full recording mode on mid-save backfills every already-generated
+chunk, not just new ones - captured gradually via the "chunk backfill per
+tick" setting above rather than all at once. A save with hundreds or
+thousands of existing chunks used to scan and dump every one of them
+synchronously in the single tick the setting changed, which was enough
+engine-call overhead alone to freeze the game for several seconds; the
+backfill queue spreads that same total cost across many ticks instead, at
+20 chunks/tick by default. New chunks generated after that (walking into
+unexplored territory) are still captured immediately, one at a time, as
+they generate - only the initial catch-up over *existing* chunks is
+queued.
 
 ## Output Format
 
@@ -64,7 +80,7 @@ Data is exported to Factorio's `script-output/replay.json` as newline-delimited 
 | `belt_contents` | A belt's contents change while in an active zone or reached by a chain walk | Per-line item counts, only for lines that changed |
 | `item_distribution` | The far end of a belt/inserter chain has any tracked contents | Per (item, rough direction from the zone) entries: `approx_count`, a `centroid` position, and how many entities that estimate is built from |
 | `unit_group_created` | A biter/spitter group forms up | Group id, force, position, human-readable state (`gathering`, `attacking_target`, ...) |
-| `corpse_created` | A player character dies and their corpse appears | `owner` (`corpse_<id>`, the same key its `inventory_delta`/`corpse_expired` events use), position, `player_index`/`player_name`, `death_tick`, and `killer` |
+| `corpse_created` | A player character dies and their corpse appears | `owner` (`corpse_<id>`, the same key its `inventory_delta`/`corpse_expired` events use), position, and `death_tick`. `player_index`/`player_name`/`killer` are included when available - the corpse itself is always reported even on the rare death where that identity link couldn't be made |
 | `corpse_expired` | A player corpse times out or is fully looted | `owner` (`corpse_<id>`) |
 | `ground_item_created` | A player manually drops an item on the ground | `owner` (`ground_item_<id>`, the same key its `inventory_delta` uses), position, `player_index` |
 | `ground_item_removed` | A tracked ground item is picked up, mined, or destroyed | `owner` (`ground_item_<id>`) |

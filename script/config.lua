@@ -57,4 +57,28 @@ function Config.inserter_search_radius()
     return settings.global["rrec-inserter-search-radius"].value
 end
 
+-- How many already-generated chunks CombatZones.process_backfill_queue()
+-- activates (scans tiles/statics/logistics for) per tick when full
+-- recording mode's backfill queue is draining - see
+-- script/combat_zones.lua. Turning full recording mode on mid-save with
+-- hundreds of existing chunks used to scan+dump every single one of them
+-- synchronously in the one tick the setting changed, which is exactly
+-- what froze the game for multiple seconds; draining a bounded number per
+-- tick instead spreads that same total cost across many ticks so no
+-- single tick pays for more than this many chunks' worth of engine calls.
+function Config.chunk_backfill_per_tick()
+    return settings.global["rrec-chunk-backfill-per-tick"].value
+end
+
+-- How often Exporter.flush() serializes the buffered event queue to
+-- replay.json. Larger values batch more events into a single write (fewer,
+-- bigger flushes); smaller values flush more often (more, smaller
+-- flushes). Kept configurable rather than control.lua's previous hardcoded
+-- 60-tick constant so a save that's still seeing single-tick stalls during
+-- heavy combat can trade flush frequency against per-flush size without a
+-- code change.
+function Config.flush_interval_ticks()
+    return math.max(1, math.floor(settings.global["rrec-flush-interval-seconds"].value * 60))
+end
+
 return Config

@@ -19,9 +19,10 @@ function CombatZones.init()
 
     -- If the map already has generated chunks (e.g. the setting was turned
     -- on partway through an existing save), bring full recording mode up to
-    -- date immediately instead of waiting for new chunks to generate.
+    -- date - via the backfill queue, not all at once - instead of waiting
+    -- for new chunks to generate.
     if Config.full_recording_mode() then
-        CombatZones.activate_all_existing_chunks()
+        CombatZones.queue_full_recording_backfill()
     end
 end
 
@@ -280,19 +281,48 @@ function CombatZones.activate_full_recording_chunk(surface, chunk_x, chunk_y)
     ensure_known(surface, chunk_x, chunk_y)
 end
 
-function CombatZones.activate_all_existing_chunks()
+-- Queues every already-generated chunk for backfill instead of activating
+-- them immediately: CombatZones.process_backfill_queue() (driven from
+-- control.lua's on_tick) drains a bounded number per tick instead. A save
+-- can easily have thousands of generated chunks by the time full recording
+-- mode gets turned on; activating (and therefore dump_static_chunk_data-ing
+-- - tiles, statics, logistics context) every single one of them
+-- synchronously in the one tick this used to run in is exactly what froze
+-- the game for multiple seconds. Queueing spreads that same total scan
+-- cost - and, as a side effect, the resulting chunk_snapshot writes - out
+-- over many ticks instead.
+function CombatZones.queue_full_recording_backfill()
+    storage.pending_backfill = storage.pending_backfill or {}
+
     -- game.surfaces is indexed by both numeric index and name, both
     -- pointing at the same LuaSurface - dedupe by surface.index so this
-    -- doesn't walk every surface's chunks twice. ensure_known()'s
-    -- storage.known_chunks guard already made a duplicate pass harmless
-    -- output-wise, but there's no reason to pay for get_chunks() twice.
+    -- doesn't walk every surface's chunks twice.
     local seen = {}
     for _, surface in pairs(game.surfaces) do
         if not seen[surface.index] then
             seen[surface.index] = true
             for chunk in surface.get_chunks() do
-                CombatZones.activate_full_recording_chunk(surface, chunk.x, chunk.y)
+                table.insert(storage.pending_backfill, {surface = surface, chunk_x = chunk.x, chunk_y = chunk.y})
             end
+        end
+    end
+end
+
+-- Drains up to Config.chunk_backfill_per_tick() entries from the backfill
+-- queue every tick - called unconditionally from control.lua's on_tick, a
+-- no-op cost (one length check) once the queue is empty. ensure_known()'s
+-- storage.known_chunks guard makes an already-activated or now-stale
+-- (surface deleted) entry harmless to skip.
+function CombatZones.process_backfill_queue()
+    local queue = storage.pending_backfill
+    if not queue or #queue == 0 then return end
+
+    local n = Config.chunk_backfill_per_tick()
+    for _ = 1, n do
+        local entry = table.remove(queue)
+        if not entry then break end
+        if entry.surface.valid then
+            CombatZones.activate_full_recording_chunk(entry.surface, entry.chunk_x, entry.chunk_y)
         end
     end
 end
