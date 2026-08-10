@@ -55,14 +55,21 @@ This one has to run *before* full recording mode is turned on - it
 specifically needs a chunk that is **not** actively recording at the far
 end of the chain, which full recording mode would defeat.
 
+One line, same reason as the spidertron/unit-group steps - local
+variables don't carry over between separate `/c` commands, and re-finding
+the far belt by position afterward (in a second command, using a
+freshly-read `game.player.position` that may no longer exactly match
+where it was placed) is exactly what broke this the first time around.
+Keeping a direct reference to the belt as it's created sidesteps that
+entirely - no re-lookup needed, and `or far_belt` keeps the *last
+successfully placed* belt if the very last position happened to be
+blocked by something:
 ```
-/c local surface = game.player.surface; local base = game.player.position; for i = 0, 35 do surface.create_entity{name = "transport-belt", position = {base.x + i, base.y + 20}, direction = defines.direction.east, force = "player"} end
-/c game.player.surface.find_entity("transport-belt", {game.player.position.x + 35, game.player.position.y + 20}).get_transport_line(1).insert_at_back{name = "iron-plate", count = 5}
-/c local b = game.player.surface.create_entity{name = "small-biter", position = {game.player.position.x, game.player.position.y + 20}, force = "enemy"}; b.die()
+/c local surface = game.player.surface; local base = game.player.position; local far_belt; for i = 0, 35 do far_belt = surface.create_entity{name = "transport-belt", position = {base.x + i, base.y + 20}, direction = defines.direction.east, force = "player"} or far_belt end; far_belt.get_transport_line(1).insert_at_back{name = "iron-plate", count = 5}; local b = surface.create_entity{name = "small-biter", position = {base.x, base.y + 20}, force = "enemy"}; b.die()
 ```
-Killing it via `die()` (rather than requiring you to walk over and fight
-it) opens a zone right at the *start* of the belt line, 36 tiles from the
-far end, with no travel needed - just wait a couple of seconds.
+Killing the biter via `die()` (rather than requiring you to walk over and
+fight it) opens a zone right at the *start* of the belt line, 36 tiles
+from the far end, with no travel needed - just wait a couple of seconds.
 
 ## 3. Cropping & zone expiry
 
