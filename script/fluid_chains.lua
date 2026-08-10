@@ -45,6 +45,9 @@ local FLUID_SEED_TYPES = {"pipe", "pipe-to-ground", "storage-tank", "pump", "flu
 -- connected to, not just "some fluidbox on that entity".
 local function fluidbox_neighbours(entity, index)
     local ok, neighbours = pcall(function() return entity.get_fluid_box_neighbours(index) end)
+    if not ok then
+        log("[replay-recorder] FluidChains: " .. entity.name .. ".get_fluid_box_neighbours failed: " .. tostring(neighbours))
+    end
     if not ok or not neighbours then return {} end
 
     local out = {}
@@ -101,15 +104,30 @@ end
 -- shared across every zone processed in this call (passed in from
 -- FluidChains.tick, not per-zone), so two zones reaching into the same
 -- pipe network don't double-report it.
+-- Every pcall in this function guards against an exotic/mid-tick-invalid
+-- entity throwing an error that would otherwise abort fluid tracking for
+-- the whole tick - see the file-level comment. That safety net has a cost:
+-- a genuine bug here (a wrong assumption about the API, not an exotic
+-- entity) fails exactly as silently as the exotic-entity case it's meant
+-- to tolerate - zero fluid_delta events, no visible error anywhere. log()
+-- on the failure path costs nothing when nothing's failing, and turns a
+-- silent "why didn't this work" into a concrete error message in
+-- factorio-current.log the next time it reproduces.
 local function process_zone(surface, area, visited_boxes, reported)
     local ok, seeds = pcall(function()
         return surface.find_entities_filtered{area = area, type = FLUID_SEED_TYPES}
     end)
-    if not ok then return end
+    if not ok then
+        log("[replay-recorder] FluidChains: find_entities_filtered failed: " .. tostring(seeds))
+        return
+    end
 
     for _, seed in ipairs(seeds) do
         if seed.valid and seed.unit_number then
             local count_ok, count = pcall(function() return seed.fluids_count end)
+            if not count_ok then
+                log("[replay-recorder] FluidChains: " .. seed.name .. ".fluids_count failed: " .. tostring(count))
+            end
             if count_ok and count then
                 for index = 1, count do
                     local key = seed.unit_number .. "_" .. index
@@ -118,8 +136,14 @@ local function process_zone(surface, area, visited_boxes, reported)
                         local rep = component[1]
                         if rep then
                             local has_ok, has_segment = pcall(function() return rep.entity.has_fluid_segment(rep.index) end)
+                            if not has_ok then
+                                log("[replay-recorder] FluidChains: " .. rep.entity.name .. ".has_fluid_segment failed: " .. tostring(has_segment))
+                            end
                             if has_ok and has_segment then
                                 local fluid_ok, fluid = pcall(function() return rep.entity.get_fluid_segment_fluid(rep.index) end)
+                                if not fluid_ok then
+                                    log("[replay-recorder] FluidChains: " .. rep.entity.name .. ".get_fluid_segment_fluid failed: " .. tostring(fluid))
+                                end
                                 if fluid_ok and fluid then
                                     local report_key = rep.entity.unit_number .. "_" .. fluid.name
                                     if not reported[report_key] then

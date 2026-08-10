@@ -186,17 +186,27 @@ end
 function Tracker.on_post_entity_died(event)
     local pending = storage.pending_corpse_info[event.unit_number]
     storage.pending_corpse_info[event.unit_number] = nil
-    if not pending then return end
 
+    -- Always emit corpse_created for every character-corpse this death
+    -- produced, even without a `pending` match - the corpse's own
+    -- existence/lifecycle (this event plus on_character_corpse_expired) is
+    -- what the rest of the mod actually depends on for cache cleanup and
+    -- for a viewer to know a corpse is there at all. `pending` (player
+    -- identity/killer) is enrichment on top of that, populated only when
+    -- Tracker.on_entity_died had a live `entity.player` to read - if that
+    -- assumption doesn't hold for some death (e.g. the character was
+    -- already detached from its player by the time on_entity_died ran),
+    -- the corpse itself should still be recorded rather than silently
+    -- dropped.
     for _, corpse in ipairs(event.corpses or {}) do
         if corpse.valid and corpse.type == "character-corpse" and corpse.unit_number then
             Exporter.log_event(game.tick, "corpse_created", {
                 owner = "corpse_" .. corpse.unit_number,
                 position = corpse.position,
-                player_index = pending.player_index,
-                player_name = pending.player_name,
-                death_tick = pending.death_tick,
-                killer = pending.killer,
+                player_index = pending and pending.player_index or nil,
+                player_name = pending and pending.player_name or nil,
+                death_tick = pending and pending.death_tick or game.tick,
+                killer = pending and pending.killer or nil,
             })
         end
     end
