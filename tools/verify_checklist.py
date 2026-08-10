@@ -67,6 +67,13 @@ def check_tiles_nonempty(events):
     return False, "every chunk_snapshot had an empty tiles list"
 
 
+def check_logistics_nonempty(events):
+    for e in events:
+        if e.get("type") == "chunk_snapshot" and e.get("data", {}).get("logistics"):
+            return True, f"e.g. {len(e['data']['logistics'])} network(s) in one snapshot"
+    return False, "every chunk_snapshot had an empty logistics list - the roboport in step 4 probably isn't reachable from the zone chunk"
+
+
 def check_kill_classification(events):
     kinds = set(_values(events, "death_event", ["victim", "hostile_kind"]))
     required = {"biter", "spitter", "worm", "spawner"}
@@ -82,6 +89,20 @@ def check_turret_damage(events):
     if not turret_dealers:
         return False, f"no damage_event dealt by anything with 'turret' in its name (dealers seen: {', '.join(sorted(dealers)) or 'none'})"
     return True, f"saw {', '.join(sorted(turret_dealers))}"
+
+
+def check_turret_destroyed(events):
+    victims = set()
+    for e in events:
+        if e.get("type") != "death_event":
+            continue
+        victim = e.get("data", {}).get("victim", {})
+        vtype = victim.get("type")
+        if vtype and "turret" in vtype:
+            victims.add(victim.get("name") or vtype)
+    if not victims:
+        return False, "no death_event with a turret-typed victim (the weak turret in step 8 should get destroyed by the behemoth)"
+    return True, f"saw {', '.join(sorted(victims))}"
 
 
 def check_vehicle_diversity(events):
@@ -112,29 +133,31 @@ def check_owner_kinds(events):
 # (check name, checklist step to re-run on failure, check function)
 CHECKS = [
     ("chunk_snapshot recorded", "1-2", present("chunk_snapshot")),
-    ("chunk_snapshot has non-empty statics", "5", check_statics_nonempty),
+    ("chunk_snapshot has non-empty statics", "8", check_statics_nonempty),
     ("chunk_snapshot has non-empty tiles", "1-2", check_tiles_nonempty),
-    ("zone_expired recorded", "3", present("zone_expired")),
+    ("chunk_snapshot has a non-empty logistics roster", "4", check_logistics_nonempty),
+    ("zone_expired recorded", "6", present("zone_expired")),
     ("mobile_positions recorded", "1-2", present("mobile_positions")),
-    ("death_event recorded", "5", present("death_event")),
-    ("kill classification covers biter/spitter/worm/spawner", "5", check_kill_classification),
-    ("score_update recorded", "7", present("score_update")),
-    ("player_respawn recorded", "7", present("player_respawn")),
-    ("damage_event recorded", "5", present("damage_event")),
-    ("damage_event includes turret-dealt damage", "5", check_turret_damage),
-    ("projectile_impact recorded", "5", present("projectile_impact")),
-    ("effect_created recorded (fire/acid)", "5", present("effect_created")),
-    ("effect_expired recorded (fire/acid fading)", "5", present("effect_expired")),
-    ("vehicle diversity (car + spidertron seen)", "6", check_vehicle_diversity),
+    ("death_event recorded", "8", present("death_event")),
+    ("kill classification covers biter/spitter/worm/spawner", "8-9", check_kill_classification),
+    ("score_update recorded", "11", present("score_update")),
+    ("player_respawn recorded", "11", present("player_respawn")),
+    ("damage_event recorded", "8", present("damage_event")),
+    ("damage_event includes turret-dealt damage", "8", check_turret_damage),
+    ("death_event includes a turret being destroyed", "8", check_turret_destroyed),
+    ("projectile_impact recorded", "8", present("projectile_impact")),
+    ("effect_created recorded (fire/acid)", "8-9", present("effect_created")),
+    ("effect_expired recorded (fire/acid fading)", "8-9", present("effect_expired")),
+    ("vehicle diversity (car + spidertron seen)", "10", check_vehicle_diversity),
     ("belt_contents recorded", "2", present("belt_contents")),
-    ("item_distribution recorded (long-chain rollup)", "2", present("item_distribution")),
-    ("fluid_delta recorded", "9", present("fluid_delta")),
-    ("inventory_delta owner_kind coverage", "2, 5-10", check_owner_kinds),
-    ("corpse_created recorded", "7", present("corpse_created")),
-    ("corpse_expired recorded", "7", present("corpse_expired")),
-    ("ground_item_created recorded", "8", present("ground_item_created")),
-    ("ground_item_removed recorded", "8", present("ground_item_removed")),
-    ("unit_group_created recorded", "11", present("unit_group_created")),
+    ("item_distribution recorded (long-chain rollup)", "2-3", present("item_distribution")),
+    ("fluid_delta recorded", "5, 13", present("fluid_delta")),
+    ("inventory_delta owner_kind coverage", "3-4, 8-14", check_owner_kinds),
+    ("corpse_created recorded", "11", present("corpse_created")),
+    ("corpse_expired recorded", "11", present("corpse_expired")),
+    ("ground_item_created recorded", "12", present("ground_item_created")),
+    ("ground_item_removed recorded", "12", present("ground_item_removed")),
+    ("unit_group_created recorded", "15", present("unit_group_created")),
 ]
 
 
