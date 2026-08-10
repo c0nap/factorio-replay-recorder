@@ -14,6 +14,7 @@ local ItemChains = require("script.item_chains")
 local FluidChains = require("script.fluid_chains")
 local Init = require("script.init")
 local Config = require("script.config")
+local Diagnostics = require("script.diagnostics")
 
 script.on_init(Init.on_init)
 script.on_configuration_changed(Init.on_configuration_changed)
@@ -65,6 +66,8 @@ end)
 
 -- Main Loop. Factorio runs at 60 ticks/second.
 script.on_event(defines.events.on_tick, function()
+    local diag = Diagnostics.start_tick()
+
     -- Drains a bounded number of chunks/tick from full recording mode's
     -- backfill queue (see CombatZones.queue_full_recording_backfill) - a
     -- no-op cost once the queue is empty, which is the common case.
@@ -91,7 +94,14 @@ script.on_event(defines.events.on_tick, function()
         FluidChains.tick(storage.active_zones, CombatZones.chunk_area)
     end
 
+    Diagnostics.end_scan(diag)
+
+    local write_profiler = nil
     if game.tick % Config.flush_interval_ticks() == 0 then
+        write_profiler = Diagnostics.start_write(diag)
         Exporter.flush()
+        if write_profiler then write_profiler.stop() end
     end
+
+    Diagnostics.end_tick(diag, write_profiler)
 end)

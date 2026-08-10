@@ -91,5 +91,12 @@ data:extend({
         minimum_value = 0.1,
         maximum_value = 60,
         order = "j"
+    },
+    {
+        type = "bool-setting",
+        name = "rrec-diagnostics-enabled",
+        setting_type = "runtime-global",
+        default_value = false,
+        order = "k"
     }
 })

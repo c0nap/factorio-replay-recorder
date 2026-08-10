@@ -41,12 +41,15 @@ second time as a misfire guard - just run the same line again if nothing
 seems to happen. Cheat mode is worth its own line since you'll type it
 twice either way.
 ```
-/c game.player.force.research_all_technologies(); game.speed=3; settings.global["rrec-distant-sample-interval-seconds"] = {value = 1}; settings.global["rrec-chain-near-hops"] = {value = 1}; settings.global["rrec-chain-max-hops"] = {value = 50}
+/c game.player.force.research_all_technologies(); game.speed=3; settings.global["rrec-distant-sample-interval-seconds"] = {value = 1}; settings.global["rrec-chain-near-hops"] = {value = 1}; settings.global["rrec-chain-max-hops"] = {value = 50}; settings.global["rrec-diagnostics-enabled"] = {value = true}
 ```
 Speeds up the slow-sample systems (logistics/item/fluid chains normally
 sample every 5s; this drops it to 1s) and sets the near/far chain split so
 a single hop already counts as "far" - makes the rollup steps below
-produce visible results without needing a huge base.
+produce visible results without needing a huge base. Also turns on the
+optional per-tick performance timings (`diagnostics_tick` events) so
+`tools/inspect_replay.py` has real numbers to summarize afterward - see
+its "Diagnostics" section in the output.
 
 ## 2. Long-chain rollup via belts (`item_distribution`)
 
