@@ -73,5 +73,23 @@ data:extend({
         minimum_value = 1,
         maximum_value = 10,
         order = "h"
+    },
+    {
+        type = "int-setting",
+        name = "rrec-chunk-backfill-per-tick",
+        setting_type = "runtime-global",
+        default_value = 20,
+        minimum_value = 1,
+        maximum_value = 500,
+        order = "i"
+    },
+    {
+        type = "double-setting",
+        name = "rrec-flush-interval-seconds",
+        setting_type = "runtime-global",
+        default_value = 1,
+        minimum_value = 0.1,
+        maximum_value = 60,
+        order = "j"
     }
 })
