@@ -83,11 +83,25 @@ def check_kill_classification(events):
     return True, f"saw {', '.join(sorted(kinds))}"
 
 
+# Deliberately a name allowlist, not "anything with 'turret' in it": a
+# real run showed both of these checks passing purely because the
+# player-hostile medium-worm-turret (spawned in the same step for kill-
+# classification coverage) dealt damage / got killed - "turret" matches
+# its name too, so the checks were satisfied without the PLAYER's own
+# gun/flamethrower turret ever proving anything. Only the turrets this
+# mod's checklist actually places for the player count here.
+PLAYER_TURRET_NAMES = {"gun-turret", "laser-turret", "flamethrower-turret"}
+
+
 def check_turret_damage(events):
     dealers = {d for d in _values(events, "damage_event", ["dealer"]) if d}
-    turret_dealers = {d for d in dealers if "turret" in d}
+    turret_dealers = dealers & PLAYER_TURRET_NAMES
     if not turret_dealers:
-        return False, f"no damage_event dealt by anything with 'turret' in its name (dealers seen: {', '.join(sorted(dealers)) or 'none'})"
+        return False, (
+            f"no damage_event dealt by a player-placed turret ({', '.join(sorted(PLAYER_TURRET_NAMES))}) "
+            f"(dealers seen: {', '.join(sorted(dealers)) or 'none'}) - note a worm turret also has "
+            "'turret' in its name but doesn't count here"
+        )
     return True, f"saw {', '.join(sorted(turret_dealers))}"
 
 
@@ -97,11 +111,14 @@ def check_turret_destroyed(events):
         if e.get("type") != "death_event":
             continue
         victim = e.get("data", {}).get("victim", {})
-        vtype = victim.get("type")
-        if vtype and "turret" in vtype:
-            victims.add(victim.get("name") or vtype)
+        name = victim.get("name")
+        if name in PLAYER_TURRET_NAMES:
+            victims.add(name)
     if not victims:
-        return False, "no death_event with a turret-typed victim (the weak turret in step 8 should get destroyed by the behemoth)"
+        return False, (
+            f"no death_event with a player-placed turret ({', '.join(sorted(PLAYER_TURRET_NAMES))}) as "
+            "victim - the weak turret in step 8 should get destroyed by the behemoth"
+        )
     return True, f"saw {', '.join(sorted(victims))}"
 
 
@@ -133,32 +150,32 @@ def check_owner_kinds(events):
 # (check name, checklist step to re-run on failure, check function)
 CHECKS = [
     ("chunk_snapshot recorded", "1-2", present("chunk_snapshot")),
-    ("chunk_snapshot has non-empty statics", "8", check_statics_nonempty),
+    ("chunk_snapshot has non-empty statics", "7", check_statics_nonempty),
     ("chunk_snapshot has non-empty tiles", "1-2", check_tiles_nonempty),
     ("chunk_snapshot has a non-empty logistics roster", "4", check_logistics_nonempty),
     ("zone_created recorded", "1-2", present("zone_created")),
-    ("zone_expired recorded", "6", present("zone_expired")),
+    ("zone_expired recorded", "2-5", present("zone_expired")),
     ("mobile_positions recorded", "1-2", present("mobile_positions")),
-    ("death_event recorded", "8", present("death_event")),
-    ("kill classification covers biter/spitter/worm/spawner", "8-9", check_kill_classification),
-    ("score_update recorded", "11", present("score_update")),
-    ("player_respawn recorded", "11", present("player_respawn")),
-    ("damage_event recorded", "8", present("damage_event")),
-    ("damage_event includes turret-dealt damage", "8", check_turret_damage),
-    ("death_event includes a turret being destroyed", "8", check_turret_destroyed),
-    ("projectile_impact recorded", "8", present("projectile_impact")),
-    ("effect_created recorded (fire/acid)", "8-9", present("effect_created")),
-    ("effect_expired recorded (fire/acid fading)", "8-9", present("effect_expired")),
-    ("vehicle diversity (car + spidertron seen)", "10", check_vehicle_diversity),
+    ("death_event recorded", "7", present("death_event")),
+    ("kill classification covers biter/spitter/worm/spawner", "9, 11", check_kill_classification),
+    ("score_update recorded", "14", present("score_update")),
+    ("player_respawn recorded", "14", present("player_respawn")),
+    ("damage_event recorded", "7", present("damage_event")),
+    ("damage_event includes turret-dealt damage", "7", check_turret_damage),
+    ("death_event includes a turret being destroyed", "7", check_turret_destroyed),
+    ("projectile_impact recorded", "7, 12", present("projectile_impact")),
+    ("effect_created recorded (fire/acid)", "7, 11", present("effect_created")),
+    ("effect_expired recorded (fire/acid fading)", "7, 11", present("effect_expired")),
+    ("vehicle diversity (car + spidertron seen)", "12-13", check_vehicle_diversity),
     ("belt_contents recorded", "2", present("belt_contents")),
     ("item_distribution recorded (long-chain rollup)", "2-3", present("item_distribution")),
-    ("fluid_delta recorded", "5, 13", present("fluid_delta")),
-    ("inventory_delta owner_kind coverage", "3-4, 8-14", check_owner_kinds),
-    ("corpse_created recorded", "11", present("corpse_created")),
-    ("corpse_expired recorded", "11", present("corpse_expired")),
-    ("ground_item_created recorded", "12", present("ground_item_created")),
-    ("ground_item_removed recorded", "12", present("ground_item_removed")),
-    ("unit_group_created recorded", "15", present("unit_group_created")),
+    ("fluid_delta recorded", "5, 16", present("fluid_delta")),
+    ("inventory_delta owner_kind coverage", "3-4, 7-17", check_owner_kinds),
+    ("corpse_created recorded", "14", present("corpse_created")),
+    ("corpse_expired recorded", "14", present("corpse_expired")),
+    ("ground_item_created recorded", "15", present("ground_item_created")),
+    ("ground_item_removed recorded", "15", present("ground_item_removed")),
+    ("unit_group_created recorded", "18", present("unit_group_created")),
 ]
 
 
