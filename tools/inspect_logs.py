@@ -1,0 +1,210 @@
+#!/usr/bin/env python3
+"""Summarizes this mod's per-tick performance timings from Factorio's own
+log file (factorio-current.log), broken down into min/p50/mean/p95/max per
+field - the same report tools/inspect_replay.py used to attempt from
+replay.json, before it turned out LuaProfiler can't hand a raw duration
+value back to Lua at all (confirmed against the real API docs: profiler
+objects are only usable anywhere a LocalisedString is accepted -
+game.print(), log(), GUI text - which does not include this mod's own JSON
+event log). script/diagnostics.lua now writes a marked line to Factorio's
+log file via log() instead, and this script reads that back.
+
+Usage:
+    python3 tools/inspect_logs.py
+    python3 tools/inspect_logs.py --path /custom/path/factorio-current.log
+
+With no arguments, it looks for factorio-current.log in the default
+Factorio user data directory for your OS. Only present when the
+rrec-diagnostics-enabled setting was on for the session you're inspecting -
+see docs/testing-checklist.md's setup step. factorio-current.log only ever
+holds the *current* session; pass --path pointing at
+factorio-previous.log for the one before that.
+
+Standard library only, no dependencies to install.
+"""
+
+import argparse
+import os
+import re
+import sys
+
+# The exact marker script/diagnostics.lua prefixes every line it logs
+# with, so this can find them amid everything else Factorio (and every
+# other mod) writes to the same log file.
+LOG_MARKER = "[replay-recorder-diagnostics]"
+
+# A LuaProfiler embedded in a LocalisedString resolves to a human-readable
+# duration like "5.432 ms" or "820 µs" - restricting the unit to a known
+# token list (rather than a generic "rest of the word") avoids a duration
+# with no unit at all (e.g. a bare "0") accidentally swallowing the next
+# field's key into its own capture.
+UNIT = r"(?:ns|us|µs|μs|ms|s)"
+DURATION = rf"[\d.]+(?:\s*{UNIT})?"
+FIELD_RE = re.compile(
+    rf"tick=(?P<tick>\d+)"
+    rf"\s+tick_time=(?P<tick_time>{DURATION})"
+    rf"\s+scan_time=(?P<scan_time>{DURATION})"
+    rf"(?:\s+write_time=(?P<write_time>{DURATION}))?"
+)
+DURATION_RE = re.compile(r"^([\d.]+)\s*(ns|us|µs|μs|ms|s)?$")
+DURATION_UNIT_TO_MS = {
+    "ns": 1e-6,
+    "us": 1e-3,
+    "µs": 1e-3,
+    "μs": 1e-3,
+    "ms": 1.0,
+    "s": 1000.0,
+    None: 1.0,
+}
+
+
+def default_log_path():
+    """Best-effort guess at where Factorio's factorio-current.log lives,
+    based on the documented per-OS user data directory - same convention
+    tools/inspect_replay.py uses for replay.json, minus the script-output
+    subfolder. If this guess is wrong for your setup, pass --path
+    explicitly."""
+    if sys.platform.startswith("win"):
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            return os.path.join(appdata, "Factorio", "factorio-current.log")
+    elif sys.platform == "darwin":
+        return os.path.expanduser(
+            "~/Library/Application Support/factorio/factorio-current.log"
+        )
+    return os.path.expanduser("~/.factorio/factorio-current.log")
+
+
+def _parse_duration_ms(text):
+    """Parses a LuaProfiler-style duration string ("5.432 ms") into a float
+    number of milliseconds, or None if it doesn't match the expected shape."""
+    match = DURATION_RE.match(text.strip())
+    if not match:
+        return None
+    value = float(match.group(1))
+    return value * DURATION_UNIT_TO_MS[match.group(2)]
+
+
+def load_samples(path):
+    """Reads factorio-current.log, returning (samples, malformed_count).
+    A sample is a dict with tick (int) and tick_time/scan_time/write_time
+    (floats, milliseconds; write_time only on ticks that flushed). A line
+    containing the marker that doesn't match the expected field shape is
+    counted as malformed rather than silently skipped - Factorio's own log
+    preamble format isn't something this script controls, so a real format
+    change elsewhere is exactly the kind of thing worth surfacing instead
+    of hiding."""
+    samples = []
+    malformed = 0
+
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if LOG_MARKER not in line:
+                continue
+
+            match = FIELD_RE.search(line)
+            if not match:
+                malformed += 1
+                continue
+
+            tick_time = _parse_duration_ms(match.group("tick_time"))
+            scan_time = _parse_duration_ms(match.group("scan_time"))
+            write_group = match.group("write_time")
+            write_time = _parse_duration_ms(write_group) if write_group else None
+
+            if tick_time is None or scan_time is None:
+                malformed += 1
+                continue
+
+            samples.append({
+                "tick": int(match.group("tick")),
+                "tick_time": tick_time,
+                "scan_time": scan_time,
+                "write_time": write_time,
+            })
+
+    return samples, malformed
+
+
+def _stats(values_ms):
+    if not values_ms:
+        return None
+    ordered = sorted(values_ms)
+    n = len(ordered)
+
+    def percentile(p):
+        return ordered[min(n - 1, int(p * n))]
+
+    return {
+        "count": n,
+        "min": ordered[0],
+        "max": ordered[-1],
+        "mean": sum(ordered) / n,
+        "p50": percentile(0.50),
+        "p95": percentile(0.95),
+    }
+
+
+def print_report(samples, malformed):
+    print("=" * 70)
+    print("Factorio Replay Recorder - performance diagnostics summary")
+    print("=" * 70)
+
+    if not samples:
+        print("No diagnostics lines found. Either the recording you're")
+        print("inspecting didn't have rrec-diagnostics-enabled turned on,")
+        print("or --path isn't pointing at the right log file.")
+        return
+
+    ticks = [s["tick"] for s in samples]
+    print(f"Samples: {len(samples)}")
+    print(f"Tick range: {min(ticks)} - {max(ticks)}")
+    if malformed:
+        print(f"Malformed diagnostics line(s) skipped: {malformed}")
+
+    labels = {
+        "tick_time": "tick (whole on_tick handler)",
+        "scan_time": "scan (CombatZones/Tracker/Logistics/ItemChains/FluidChains)",
+        "write_time": "write (Exporter.flush - only present on flush ticks)",
+    }
+    print("\nPer-tick timings (milliseconds):")
+    for field, label in labels.items():
+        stats = _stats([s[field] for s in samples if s[field] is not None])
+        if not stats:
+            continue
+        print(f"  {label}:")
+        print(
+            f"    samples={stats['count']}  min={stats['min']:.3f}  p50={stats['p50']:.3f}  "
+            f"mean={stats['mean']:.3f}  p95={stats['p95']:.3f}  max={stats['max']:.3f}"
+        )
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument(
+        "--path", "-p",
+        help="Path to factorio-current.log. Defaults to the standard Factorio user data location for your OS.",
+    )
+    args = parser.parse_args()
+
+    path = args.path or default_log_path()
+
+    if not os.path.isfile(path):
+        print(f"Could not find a Factorio log file at:\n  {path}")
+        print("\nIf that's not where your Factorio user data directory is,")
+        print("pass the real location with --path, e.g.:")
+        print("  python3 tools/inspect_logs.py --path /path/to/factorio-current.log")
+        sys.exit(1)
+
+    samples, malformed = load_samples(path)
+    print(f"Reading: {path}\n")
+    print_report(samples, malformed)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except BrokenPipeError:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        sys.exit(1)

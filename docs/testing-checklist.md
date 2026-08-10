@@ -47,10 +47,22 @@ Speeds up the slow-sample systems (logistics/item/fluid chains normally
 sample every 5s; this drops it to 1s) and sets the near/far chain split so
 a single hop already counts as "far" - makes the rollup steps below
 produce visible results without needing a huge base. Also turns on the
-optional per-tick performance timings (`diagnostics_tick` events - see
-"Diagnostics" in `tools/inspect_replay.py`'s output) and the in-game
-battlefield perimeter marker (a cyan line traced around the exterior edge
-of whatever chunks are currently recording - see step 7).
+optional per-tick performance timings and the in-game battlefield
+perimeter marker (a cyan line traced around the exterior edge of whatever
+chunks are currently recording - see step 7).
+
+The performance timings don't go into `replay.json` - `LuaProfiler`
+can't hand a raw duration value back to Lua at all, only to things like
+`game.print()`/`log()`, so they're written straight to Factorio's own log
+file instead. Find it at:
+* **Windows:** `%APPDATA%\Factorio\factorio-current.log`
+* **macOS:** `~/Library/Application Support/factorio/factorio-current.log`
+* **Linux:** `~/.factorio/factorio-current.log`
+
+and summarize it the same way as the other tools, after you're done:
+```
+python3 tools/inspect_logs.py
+```
 
 ## 2. Long-chain rollup via belts (`item_distribution`)
 
@@ -336,6 +348,13 @@ python3 tools/inspect_replay.py
 Both default to the standard Factorio `script-output` location for your
 OS; pass `--path` if that's wrong for your setup.
 
+If you turned on diagnostics in step 1, break down the per-tick timing
+data (written to Factorio's own log file, not `replay.json` - see step 1
+for why and exactly where to find it):
+```
+python3 tools/inspect_logs.py
+```
+
 ---
 
 ## Not covered by this checklist (future work)
@@ -368,13 +387,3 @@ Noted rather than silently skipped:
   position/target-resolution properties rather than anything requiring
   power to be flowing - but it's unconfirmed whether that holds for
   everything else these unpowered entities are asked to do here.
-* **Diagnostics timings are currently unusable** - `LuaProfiler` doesn't
-  expose raw time values to Lua at all (confirmed in the real API docs);
-  it's only usable as a `LocalisedString` (`game.print`, `log()`, GUI
-  text), not via `tostring()`, concatenation, or any other route into a
-  plain Lua string or number. `diagnostics_tick` events currently log the
-  literal string `"[LuaProfiler]"` for every field as a result -
-  worthless for the min/p50/mean/p95/max breakdown `tools/inspect_replay.py`
-  tries to build from them. Needs a real design change (see the open PR
-  description), not another guess at extracting a value that the engine
-  deliberately doesn't hand to scripts.
