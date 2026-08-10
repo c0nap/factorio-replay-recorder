@@ -73,6 +73,15 @@ script.on_event(defines.events.on_tick, function()
     -- "Distant" data - logistics network contents, far-chain item
     -- rollups, fluid segments - is sampled far less often than the
     -- per-tick physical scan above; see Config.distant_sample_interval_ticks.
+    --
+    -- Under full recording mode, storage.active_zones stays empty (see
+    -- CombatZones.activate_full_recording_chunk) - Logistics.tick()/
+    -- ItemChains.tick() naturally become no-ops as a result, correctly:
+    -- everything they'd otherwise report as "distant" is already covered
+    -- directly by Tracker.tick()'s whole-surface scan when there's no
+    -- cropping happening at all. FluidChains.tick() is the one exception
+    -- (fluids have no per-tick Tier 1 equivalent) - it handles full
+    -- recording mode internally instead of relying on active_zones.
     if game.tick % Config.distant_sample_interval_ticks() == 0 then
         Logistics.tick(storage.active_zones, CombatZones.is_zone_active, CombatZones.chunk_area)
         ItemChains.tick(storage.active_zones, CombatZones.is_zone_active, CombatZones.chunk_area)

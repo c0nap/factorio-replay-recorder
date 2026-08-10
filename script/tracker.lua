@@ -403,48 +403,84 @@ local function scan_physical_items(surface, area)
     end
 end
 
-function Tracker.tick()
-    local mobile_data = {}
+local MOBILE_ENTITY_TYPES = {"unit", "character", "car", "spider-vehicle", "locomotive",
+        "cargo-wagon", "fluid-wagon", "artillery-wagon",
+        "combat-robot", "construction-robot", "logistic-robot"}
+local BELT_ENTITY_TYPES = {"transport-belt", "underground-belt", "splitter"}
 
-    for _, zone in pairs(storage.active_zones) do
-        local area = CombatZones.chunk_area(zone.chunk_x, zone.chunk_y)
+local function process_mobile_entities(entities, mobile_data)
+    for _, ent in ipairs(entities) do
+        if ent.valid then
+            local record = {
+                id = ent.unit_number or (ent.player and ent.player.index),
+                name = ent.name,
+                type = ent.type,
+                force = ent.force.name,
+                position = ent.position,
+                orientation = ent.orientation,
+                group_id = unit_group_id(ent),
+                spawner_id = storage.spawned_by[ent.unit_number],
+            }
+            table.insert(mobile_data, record)
 
-        local entities = zone.surface.find_entities_filtered{
-            area = area,
-            type = {"unit", "character", "car", "spider-vehicle", "locomotive",
-                    "cargo-wagon", "fluid-wagon", "artillery-wagon",
-                    "combat-robot", "construction-robot", "logistic-robot"}
-        }
-
-        for _, ent in ipairs(entities) do
-            if ent.valid then
-                local record = {
-                    id = ent.unit_number or (ent.player and ent.player.index),
-                    name = ent.name,
-                    type = ent.type,
-                    force = ent.force.name,
-                    position = ent.position,
-                    orientation = ent.orientation,
-                    group_id = unit_group_id(ent),
-                    spawner_id = storage.spawned_by[ent.unit_number],
-                }
-                table.insert(mobile_data, record)
-
-                if VEHICLE_INVENTORY_SLOTS[ent.type] then
-                    TrackerEvents.log_inventory_delta("vehicle_" .. ent.unit_number, "vehicle", vehicle_inventory_contents(ent))
-                elseif ent.type == "construction-robot" or ent.type == "logistic-robot" then
-                    local inv = ent.get_inventory(defines.inventory.robot_cargo)
-                    if inv then
-                        TrackerEvents.log_inventory_delta("robot_" .. ent.unit_number, "robot", TrackerEvents.flatten_contents(inv.get_contents()))
-                    end
+            if VEHICLE_INVENTORY_SLOTS[ent.type] then
+                TrackerEvents.log_inventory_delta("vehicle_" .. ent.unit_number, "vehicle", vehicle_inventory_contents(ent))
+            elseif ent.type == "construction-robot" or ent.type == "logistic-robot" then
+                local inv = ent.get_inventory(defines.inventory.robot_cargo)
+                if inv then
+                    TrackerEvents.log_inventory_delta("robot_" .. ent.unit_number, "robot", TrackerEvents.flatten_contents(inv.get_contents()))
                 end
             end
         end
+    end
+end
 
-        local belt_entities = zone.surface.find_entities_filtered{area = area, type = {"transport-belt", "underground-belt", "splitter"}}
-        TrackerEvents.log_belt_contents(belt_entities)
+-- One tick's worth of scanning for a given surface, restricted to `area`
+-- if given, or the whole surface if `area` is nil (Lua's table
+-- constructor drops a nil-valued key entirely, so `{area = nil, ...}`
+-- and `{...}` with no area key at all are the same call - `find_entities_
+-- filtered` treats a missing area as "search everywhere"). Shared by both
+-- Tracker.tick() branches below so the actual scanning logic - what a
+-- mobile entity's record looks like, how belts/physical items get diffed
+-- - only exists once regardless of which query strategy found them.
+local function tick_area(surface, area, mobile_data)
+    process_mobile_entities(surface.find_entities_filtered{area = area, type = MOBILE_ENTITY_TYPES}, mobile_data)
 
-        scan_physical_items(zone.surface, area)
+    local belt_entities = surface.find_entities_filtered{area = area, type = BELT_ENTITY_TYPES}
+    TrackerEvents.log_belt_contents(belt_entities)
+
+    scan_physical_items(surface, area)
+end
+
+function Tracker.tick()
+    local mobile_data = {}
+
+    if Config.full_recording_mode() then
+        -- Every generated chunk is active under full recording (see
+        -- CombatZones.activate_full_recording_chunk), and there's no
+        -- storage.active_zones entry per chunk to loop over anymore -
+        -- looping 3 find_entities_filtered calls per chunk, every tick,
+        -- is exactly what made a save with more than a couple hundred
+        -- generated chunks freeze solid. One whole-surface query per
+        -- type finds exactly the same entities a per-chunk loop would,
+        -- through 3 engine calls total (per surface) instead of 3 per
+        -- chunk.
+        --
+        -- game.surfaces is indexed by BOTH numeric index and name, both
+        -- pointing at the same LuaSurface - `seen` dedupes by
+        -- surface.index so a naive `pairs()` walk doesn't scan (and
+        -- double-report) every surface twice.
+        local seen = {}
+        for _, surface in pairs(game.surfaces) do
+            if not seen[surface.index] then
+                seen[surface.index] = true
+                tick_area(surface, nil, mobile_data)
+            end
+        end
+    else
+        for _, zone in pairs(storage.active_zones) do
+            tick_area(zone.surface, CombatZones.chunk_area(zone.chunk_x, zone.chunk_y), mobile_data)
+        end
     end
 
     if #mobile_data > 0 then

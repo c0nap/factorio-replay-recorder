@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Summarizes a Factorio Replay Recorder output file (replay.json) so you
-don't have to read raw JSONL by hand to tell whether a test scenario
-produced the events it should have.
+don't have to read raw JSONL by hand to tell what a session recorded.
 
 Usage:
     python3 tools/inspect_replay.py
@@ -15,13 +14,23 @@ so this script parses it as a stream rather than a single JSON document.
 
 Nothing here talks to Factorio or the mod directly; it only reads the file
 the mod already wrote. Standard library only, no dependencies to install.
+
+For a pass/fail check against a specific test scenario (docs/testing-
+checklist.md), use tools/verify_checklist.py instead - this script is a
+general-purpose summary, not a test runner.
 """
 
 import argparse
 import collections
 import json
+import math
 import os
+import re
 import sys
+
+CHUNK_SIZE = 32
+TICKS_PER_SECOND = 60
+CHUNK_ID_RE = re.compile(r"^(.*)_(-?\d+)_(-?\d+)$")
 
 
 def default_replay_path():
@@ -75,6 +84,189 @@ def truncate(obj, max_items=5):
     return obj
 
 
+def find_positions(obj):
+    """Yields every {"x": ..., "y": ...} dict found anywhere inside a
+    parsed JSON value. Generic on purpose: different event types carry
+    position at different nesting depths (top-level, per-entity in
+    mobile_positions, nested under `victim`/`source`, ...), and walking
+    for the shape rather than hardcoding a field path per event type means
+    this doesn't need updating every time an event's schema changes."""
+    if isinstance(obj, dict):
+        x, y = obj.get("x"), obj.get("y")
+        if (
+            set(obj.keys()) == {"x", "y"}
+            and isinstance(x, (int, float))
+            and isinstance(y, (int, float))
+        ):
+            yield obj
+            return
+        for value in obj.values():
+            yield from find_positions(value)
+    elif isinstance(obj, list):
+        for value in obj:
+            yield from find_positions(value)
+
+
+def _chunk_snapshot_chunks(events):
+    """{(surface, cx, cy): first_tick} for every chunk ever snapshotted -
+    chunk_snapshot fires exactly once per chunk, the first time it becomes
+    active, making this the precise, authoritative set of "chunks that
+    were ever part of a recorded battlefield" (no position-guessing
+    needed for cluster membership, only for the activity breakdown
+    below)."""
+    chunks = {}
+    for e in events:
+        if e.get("type") != "chunk_snapshot":
+            continue
+        data = e.get("data", {})
+        chunk = data.get("chunk")
+        surface = data.get("surface")
+        tick = e.get("tick")
+        if chunk is None or surface is None or tick is None:
+            continue
+        key = (surface, chunk[0], chunk[1])
+        if key not in chunks or tick < chunks[key]:
+            chunks[key] = tick
+    return chunks
+
+
+def _zone_expiry_ticks(events):
+    """{(surface, cx, cy): [expiry ticks]} parsed from zone_expired's
+    chunk_id string, in the same "<surface>_<cx>_<cy>" format
+    combat_zones.lua's chunk_id() builds it in."""
+    expiries = collections.defaultdict(list)
+    for e in events:
+        if e.get("type") != "zone_expired":
+            continue
+        chunk_id = e.get("data", {}).get("chunk_id")
+        tick = e.get("tick")
+        if not chunk_id or tick is None:
+            continue
+        m = CHUNK_ID_RE.match(chunk_id)
+        if not m:
+            continue
+        surface, cx, cy = m.group(1), int(m.group(2)), int(m.group(3))
+        expiries[(surface, cx, cy)].append(tick)
+    return expiries
+
+
+def _cluster_battlefields(chunk_first_tick):
+    """Groups chunk_snapshot chunks into connected components (8-connected
+    adjacency, same surface) - each component is one "battlefield": a
+    spatially contiguous area that was ever recorded, regardless of how
+    many separate times it went quiet and reactivated in between."""
+    parent = {key: key for key in chunk_first_tick}
+
+    def find(k):
+        while parent[k] != k:
+            parent[k] = parent[parent[k]]
+            k = parent[k]
+        return k
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    by_surface = collections.defaultdict(list)
+    for surface, cx, cy in chunk_first_tick:
+        by_surface[surface].append((cx, cy))
+
+    for surface, coords in by_surface.items():
+        coord_set = set(coords)
+        for cx, cy in coords:
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    if dx == 0 and dy == 0:
+                        continue
+                    if (cx + dx, cy + dy) in coord_set:
+                        union((surface, cx, cy), (surface, cx + dx, cy + dy))
+
+    clusters = collections.defaultdict(list)
+    for key in chunk_first_tick:
+        clusters[find(key)].append(key)
+    return list(clusters.values())
+
+
+def _battlefield_stats(events):
+    """One entry per spatially-connected cluster of ever-active chunks:
+    chunk count/bounding box, activity time span, and a rough breakdown of
+    what happened there. Returns None if there's nothing to cluster."""
+    chunk_first_tick = _chunk_snapshot_chunks(events)
+    if not chunk_first_tick:
+        return None
+
+    zone_expiries = _zone_expiry_ticks(events)
+    clusters = _cluster_battlefields(chunk_first_tick)
+
+    all_ticks = [e.get("tick") for e in events if isinstance(e.get("tick"), (int, float))]
+    max_tick = max(all_ticks) if all_ticks else 0
+
+    stats = []
+    # Keyed by (cx, cy) only (surface dropped) - most events don't carry
+    # an explicit surface field to cross-reference against, so this
+    # assumes one global grid. Correct for the common single-surface
+    # case; an approximation (could misattribute across surfaces sharing
+    # the same chunk coordinates) if multiple surfaces are in play.
+    chunk_to_cluster = {}
+    for idx, chunks in enumerate(clusters):
+        surface = chunks[0][0]
+        cxs = [c[1] for c in chunks]
+        cys = [c[2] for c in chunks]
+        expiry_ticks = [t for c in chunks for t in zone_expiries.get(c, [])]
+        stats.append({
+            "surface": surface,
+            "chunk_count": len(chunks),
+            "bbox": (min(cxs), max(cxs), min(cys), max(cys)),
+            "first_tick": min(chunk_first_tick[c] for c in chunks),
+            "last_tick": max(expiry_ticks) if expiry_ticks else max_tick,
+            "still_active": not expiry_ticks,
+            "events": collections.Counter(),
+        })
+        for c in chunks:
+            chunk_to_cluster[(c[1], c[2])] = idx
+
+    for e in events:
+        etype = e.get("type")
+        if etype in ("chunk_snapshot", "zone_expired"):
+            continue  # structural facts, not "activity", already counted above
+        touched = set()
+        for pos in find_positions(e.get("data")):
+            cx = math.floor(pos["x"] / CHUNK_SIZE)
+            cy = math.floor(pos["y"] / CHUNK_SIZE)
+            idx = chunk_to_cluster.get((cx, cy))
+            if idx is not None:
+                touched.add(idx)
+        for idx in touched:
+            stats[idx]["events"][etype] += 1
+
+    return stats
+
+
+def _print_battlefields(events, max_shown=15):
+    stats = _battlefield_stats(events)
+    if not stats:
+        print("\nBattlefields found: 0 (no chunk_snapshot events)")
+        return
+
+    print(f"\nBattlefields found: {len(stats)}")
+    ranked = sorted(stats, key=lambda c: sum(c["events"].values()), reverse=True)
+    for i, c in enumerate(ranked[:max_shown], 1):
+        min_cx, max_cx, min_cy, max_cy = c["bbox"]
+        span_s = (c["last_tick"] - c["first_tick"]) / TICKS_PER_SECOND
+        active_note = " [still active at end of recording]" if c["still_active"] else ""
+        print(
+            f"  #{i} {c['surface']}: {c['chunk_count']} chunk(s) "
+            f"(bbox {max_cx - min_cx + 1}x{max_cy - min_cy + 1}), "
+            f"ticks {c['first_tick']}-{c['last_tick']} (~{span_s:.0f}s){active_note}"
+        )
+        top = ", ".join(f"{n} {t}" for t, n in c["events"].most_common(5))
+        if top:
+            print(f"      {top}")
+    if len(ranked) > max_shown:
+        print(f"  ... and {len(ranked) - max_shown} more (smaller/quieter)")
+
+
 def summarize(events, malformed, sample_limit, only_type):
     counts = collections.Counter(e.get("type", "<missing type>") for e in events)
 
@@ -95,14 +287,15 @@ def summarize(events, malformed, sample_limit, only_type):
         span = max(ticks) - min(ticks)
         print(
             f"Tick range: {min(ticks)} - {max(ticks)} "
-            f"(~{span / 60:.1f}s of recorded activity, at 60 ticks/sec)"
+            f"(~{span / TICKS_PER_SECOND:.1f}s of recorded activity, at {TICKS_PER_SECOND} ticks/sec)"
         )
 
     print("\nEvent counts by type:")
     for event_type, count in counts.most_common():
         print(f"  {event_type:<20} {count}")
 
-    _summarize_chunks(events)
+    _print_battlefields(events)
+    _summarize_owner_kinds(events)
     _summarize_scores(events)
     _summarize_kills(events)
 
@@ -118,19 +311,17 @@ def summarize(events, malformed, sample_limit, only_type):
             print(json.dumps(truncate(event), indent=2))
 
 
-def _summarize_chunks(events):
-    chunks = set()
+def _summarize_owner_kinds(events):
+    kinds = collections.Counter()
     for e in events:
-        if e.get("type") == "chunk_snapshot":
-            data = e.get("data", {})
-            chunk = data.get("chunk")
-            surface = data.get("surface")
-            if chunk is not None:
-                chunks.add((surface, tuple(chunk)))
-    if chunks:
-        print(f"\nDistinct chunks snapshotted: {len(chunks)}")
-        for surface, chunk in sorted(chunks):
-            print(f"  surface={surface} chunk={list(chunk)}")
+        if e.get("type") == "inventory_delta":
+            kind = e.get("data", {}).get("owner_kind")
+            if kind:
+                kinds[kind] += 1
+    if kinds:
+        print("\ninventory_delta owner kinds seen:")
+        for kind, count in kinds.most_common():
+            print(f"  {kind:<15} {count}")
 
 
 def _summarize_scores(events):
@@ -172,8 +363,8 @@ def main():
         help="Only show sample payloads for this event type (counts/summary sections still cover everything).",
     )
     parser.add_argument(
-        "--limit", "-n", type=int, default=2,
-        help="Number of sample payloads to print per event type (default: 2).",
+        "--limit", "-n", type=int, default=1,
+        help="Number of sample payloads to print per event type (default: 1).",
     )
     args = parser.parse_args()
 

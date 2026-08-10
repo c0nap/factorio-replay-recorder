@@ -96,15 +96,21 @@ There's no automated test suite - the mod's behavior depends on a live
 player character interacting with a running Factorio simulation, which
 isn't something a headless CI job can easily stand in for. Instead:
 
-* [`docs/testing-checklist.md`](docs/testing-checklist.md) walks through a
-  set of console commands and in-game actions in a real (throwaway) save
-  that exercise each feature - spawning a biter fight, killing a player to
-  check the scoring/respawn flow, toggling full recording mode, and so on.
-* [`tools/inspect_replay.py`](tools/inspect_replay.py) reads the
-  `replay.json` that produces and prints a concise summary (event counts,
-  tick range, scoreboard, kills by kind/size, and sample payloads) instead
-  of you having to read raw JSONL by hand. No dependencies beyond Python's
-  standard library:
+* [`docs/testing-checklist.md`](docs/testing-checklist.md) is a short,
+  heavily console-scripted list of scenarios to run through in a real
+  (throwaway) save, covering every event type the mod can produce.
+* [`tools/verify_checklist.py`](tools/verify_checklist.py) checks the
+  resulting `replay.json` against that checklist and prints a pass/fail
+  line per scenario - this is the thing to run (and paste, if something
+  fails) instead of raw JSON:
+  ```
+  python3 tools/verify_checklist.py
+  ```
+* [`tools/inspect_replay.py`](tools/inspect_replay.py) is a general-purpose
+  summary for anything not tied to the checklist - event counts, tick
+  range, battlefield count/duration/bounding box, scoreboard, kills by
+  kind/size, and a sample payload per event type. No dependencies beyond
+  Python's standard library for either script:
   ```
   python3 tools/inspect_replay.py
   ```
