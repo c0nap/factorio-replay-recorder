@@ -187,7 +187,7 @@ function Tracker.on_player_died(event)
     -- death this same player never fully cleared.
     local corpses = player.surface.find_entities_filtered{type = "character-corpse"}
     for _, corpse in pairs(corpses) do
-        if corpse.valid and corpse.character_corpse_player_index == event.player_index
+        if corpse.valid and corpse.unit_number and corpse.character_corpse_player_index == event.player_index
             and corpse.character_corpse_tick_of_death == game.tick then
             Exporter.log_event(game.tick, "corpse_created", {
                 owner = "corpse_" .. corpse.unit_number,
