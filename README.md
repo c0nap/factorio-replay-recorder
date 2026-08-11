@@ -42,7 +42,7 @@ All settings live under *Settings > Mod Settings > Map* and can be changed witho
 | Inserter search radius | 3 tiles | How far to search around a chest for inserters that service it (chests have no "what's connected to me" query of their own). The radius only narrows the search - matches are confirmed via each candidate's exact `pickup_target`/`drop_target`, so a too-large radius costs a little performance, not correctness. |
 | Chunk backfill per tick | 20 chunks | When full recording mode turns on with already-generated chunks in the save, how many of them get scanned and captured per tick while catching up. Lower spreads the catch-up out over more ticks (smoother, slower to finish); higher finishes faster at the cost of more work per tick. See [Full Recording Mode](#full-recording-mode-performance) below. |
 | Flush interval | 1 second | How often the buffered event queue gets serialized and written to `replay.json`, at most - see "Max buffered events" below for the other trigger. Larger values batch more events into fewer, bigger writes; smaller values write more often in smaller chunks. |
-| Max buffered events | 25 events | Caps how many buffered events a single flush serializes+writes, and triggers an early flush - before the flush interval above is even up - once the buffer grows past this size. See [Full Recording Mode](#full-recording-mode-performance) below. |
+| Max buffered events | 10 events | Caps how many buffered events a single flush serializes+writes, and triggers an early flush - before the flush interval above is even up - once the buffer grows past this size. See [Full Recording Mode](#full-recording-mode-performance) below. |
 | Full recording mode | Off | Disables cropping and records every generated chunk continuously. **Produces enormous files** (potentially gigabytes per hour) - meant for short recordings or debugging, not routine play. |
 | Diagnostics enabled | Off | Writes per-tick timing to Factorio's own log file, not `replay.json` (see [Performance diagnostics](#performance-diagnostics) below). |
 | Battlefield marker enabled | Off | Draws a cyan line around the exterior perimeter of whatever chunks are currently recording (see [Battlefield marker](#battlefield-marker) below). A no-op under full recording mode. |
@@ -96,10 +96,20 @@ objects go in as `LocalisedString` elements, the same way they'd be
 passed to `game.print()`, and Factorio resolves them into formatted
 duration text on the way into the log. Run
 [`tools/inspect_logs.py`](tools/inspect_logs.py) to break that log data
-down into the same min/p50/mean/p95/max report per field:
+down:
 ```
 python3 tools/inspect_logs.py
 ```
+Beyond the min/p50/mean/p95/max summary per field, it also reports the
+slowest N individual ticks per field (`--top-n`, default 10) and any
+"slow streaks" - runs of consecutive ticks that were each at or above a
+threshold (their field's own p95 by default, or `--slow-threshold-ms` to
+set one explicitly). A summary stat alone can't tell a single freak spike
+apart from many ticks in a row each being a little slow - which is what
+actually reads as a stutter to a player - so the streak report exists
+specifically to identify *that* pattern instead of just describing the
+distribution.
+
 It defaults to the standard per-OS `factorio-current.log` location (see
 `docs/testing-checklist.md`'s setup step for the exact paths); pass
 `--path` if that's wrong for your setup, e.g. to point at
