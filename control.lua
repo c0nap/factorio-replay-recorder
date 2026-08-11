@@ -22,7 +22,7 @@ script.on_configuration_changed(Init.on_configuration_changed)
 
 -- Combat & Death Hooks
 script.on_event(defines.events.on_entity_died, Tracker.on_entity_died)
-script.on_event(defines.events.on_post_entity_died, Tracker.on_post_entity_died)
+script.on_event(defines.events.on_player_died, Tracker.on_player_died)
 script.on_event(defines.events.on_character_corpse_expired, Tracker.on_character_corpse_expired)
 script.on_event(defines.events.on_entity_damaged, Tracker.on_entity_damaged)
 script.on_event(defines.events.on_script_trigger_effect, Tracker.on_script_trigger_effect)

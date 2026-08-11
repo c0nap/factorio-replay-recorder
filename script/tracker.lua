@@ -92,22 +92,6 @@ function Tracker.on_entity_died(event)
 
     local scoreable = is_scoreable_kind(entity.type) and entity.force.name ~= "enemy"
 
-    -- A dying player character's own corpse doesn't exist yet at this
-    -- point (on_post_entity_died creates it, after this event), and that
-    -- later event only carries the ORIGINAL entity's unit_number, not a
-    -- direct reference back to this one - so identity/cause is stashed
-    -- here, keyed by that same unit_number, for on_post_entity_died to
-    -- pick back up once the corpse exists. Non-player characters (no
-    -- .player) are skipped - there's no player identity to attach.
-    if entity.type == "character" and entity.player and entity.unit_number then
-        storage.pending_corpse_info[entity.unit_number] = {
-            player_index = entity.player.index,
-            player_name = entity.player.name,
-            death_tick = game.tick,
-            killer = killer_data,
-        }
-    end
-
     -- Deaths always try to open/extend a combat zone (gated internally on
     -- player proximity), same as before. What's new is that we only bother
     -- writing the death itself to the file if it happened somewhere we
@@ -173,41 +157,47 @@ function Tracker.on_entity_died(event)
     })
 end
 
--- Fires after on_entity_died, once the corpse(s) an entity's death
--- produced actually exist. This is the only place a player corpse's
--- provenance ("this is a player corpse from <time>, here's who and what
--- killed them") can be recorded - on_entity_died fires too early (the
--- corpse doesn't exist yet) and the corpse's own inventory_delta stream
--- (Tracker.scan_physical_items) has nowhere to carry this one-time
--- context. `event.unit_number` is the ORIGINAL died entity's unit_number
--- (not the corpse's), which is exactly what on_entity_died stashed
--- pending info under above - correlates the two without any timing or
--- position matching.
-function Tracker.on_post_entity_died(event)
-    local pending = storage.pending_corpse_info[event.unit_number]
-    storage.pending_corpse_info[event.unit_number] = nil
+-- Player corpses do NOT go through on_entity_died/on_post_entity_died at
+-- all - confirmed against the real API/developer statements: the generic
+-- entity death system is entirely unaware of the character death system,
+-- so on_post_entity_died's `event.corpses` is always empty for a player's
+-- own death (that's the actual reason corpse_created stayed at 0 events
+-- across every earlier attempt built on that event - not a bug in the
+-- pending-info handoff, the handoff's source event never fires with
+-- useful data in the first place). on_player_died is the correct event,
+-- but its payload only carries `player_index`/`cause` - not the corpse
+-- itself - so the corpse has to be looked up by hand right after.
+function Tracker.on_player_died(event)
+    local player = game.get_player(event.player_index)
+    if not player then return end
 
-    -- Always emit corpse_created for every character-corpse this death
-    -- produced, even without a `pending` match - the corpse's own
-    -- existence/lifecycle (this event plus on_character_corpse_expired) is
-    -- what the rest of the mod actually depends on for cache cleanup and
-    -- for a viewer to know a corpse is there at all. `pending` (player
-    -- identity/killer) is enrichment on top of that, populated only when
-    -- Tracker.on_entity_died had a live `entity.player` to read - if that
-    -- assumption doesn't hold for some death (e.g. the character was
-    -- already detached from its player by the time on_entity_died ran),
-    -- the corpse itself should still be recorded rather than silently
-    -- dropped.
-    for _, corpse in ipairs(event.corpses or {}) do
-        if corpse.valid and corpse.type == "character-corpse" and corpse.unit_number then
+    local cause = event.cause
+    local killer_data = nil
+    if cause and cause.valid then
+        killer_data = {name = cause.name, type = cause.type, force = cause.force.name}
+    end
+
+    -- character_corpse_player_index/character_corpse_tick_of_death are
+    -- confirmed properties specific to the character-corpse entity type
+    -- (distinct from - and not overlapping with - the generic decorative
+    -- "corpse" type biters/vehicles leave behind). Matching on both the
+    -- player index AND this tick (corpse creation happens right before
+    -- on_player_died fires, same tick) picks out the corpse THIS death
+    -- just created, not a still-unlooted one left over from an earlier
+    -- death this same player never fully cleared.
+    local corpses = player.surface.find_entities_filtered{type = "character-corpse"}
+    for _, corpse in pairs(corpses) do
+        if corpse.valid and corpse.character_corpse_player_index == event.player_index
+            and corpse.character_corpse_tick_of_death == game.tick then
             Exporter.log_event(game.tick, "corpse_created", {
                 owner = "corpse_" .. corpse.unit_number,
                 position = corpse.position,
-                player_index = pending and pending.player_index or nil,
-                player_name = pending and pending.player_name or nil,
-                death_tick = pending and pending.death_tick or game.tick,
-                killer = pending and pending.killer or nil,
+                player_index = event.player_index,
+                player_name = player.name,
+                death_tick = corpse.character_corpse_tick_of_death,
+                killer = killer_data,
             })
+            break
         end
     end
 end

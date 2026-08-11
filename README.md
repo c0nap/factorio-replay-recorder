@@ -135,7 +135,7 @@ Data is exported to Factorio's `script-output/replay.json` as newline-delimited 
 | `belt_contents` | A belt's contents change while in an active zone or reached by a chain walk | Per-line item counts, only for lines that changed |
 | `item_distribution` | The far end of a belt/inserter chain has any tracked contents | Per (item, rough direction from the zone) entries: `approx_count`, a `centroid` position, and how many entities that estimate is built from |
 | `unit_group_created` | A biter/spitter group forms up | Group id, force, position, human-readable state (`gathering`, `attacking_target`, ...) |
-| `corpse_created` | A player character dies and their corpse appears | `owner` (`corpse_<id>`, the same key its `inventory_delta`/`corpse_expired` events use), position, and `death_tick`. `player_index`/`player_name`/`killer` are included when available - the corpse itself is always reported even on the rare death where that identity link couldn't be made |
+| `corpse_created` | A player character dies and their corpse appears | `owner` (`corpse_<id>`, the same key its `inventory_delta`/`corpse_expired` events use), position, `death_tick`, `player_index`/`player_name`, and `killer` if the death had one |
 | `corpse_expired` | A player corpse times out or is fully looted | `owner` (`corpse_<id>`) |
 | `ground_item_created` | A player manually drops an item on the ground | `owner` (`ground_item_<id>`, the same key its `inventory_delta` uses), position, `player_index` |
 | `ground_item_removed` | A tracked ground item is picked up, mined, or destroyed | `owner` (`ground_item_<id>`) |
