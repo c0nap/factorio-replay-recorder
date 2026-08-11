@@ -68,7 +68,25 @@ lands in a chunk that was never itself active.
 ```
 Wait a couple of seconds.
 
-## 4. Distant logistics network (roboport)
+## 4. Inserter-to-chest servicing under ambiguity
+
+Tests: `servicing_inserters`' search-radius heuristic (candidate chests
+within a configurable radius of a servicing inserter, narrowed down to an
+exact match via `pickup_target`/`drop_target` identity) doesn't
+misattribute a nearby chest actually served by a *different* inserter.
+Two independent inserter+chest pairs, placed within each other's default
+3-tile search radius so each is a real candidate for the other's chest,
+not just an easy isolated case.
+
+```
+/c local surface = game.player.surface; local base = game.player.position; local ccx = math.floor(base.x / 32) * 32; local ccy = math.floor((base.y + 96) / 32) * 32; local ins_a = surface.create_entity{name = "inserter", position = {ccx + 10, ccy + 10}, direction = defines.direction.east, force = "player"}; local chest_a = surface.create_entity{name = "iron-chest", position = {ccx + 11, ccy + 10}, force = "player"}; chest_a.get_inventory(defines.inventory.chest).insert{name = "iron-plate", count = 40}; local ins_b = surface.create_entity{name = "inserter", position = {ccx + 10, ccy + 12}, direction = defines.direction.south, force = "player"}; local chest_b = surface.create_entity{name = "iron-chest", position = {ccx + 10, ccy + 13}, force = "player"}; chest_b.get_inventory(defines.inventory.chest).insert{name = "copper-plate", count = 40}; local b = surface.create_entity{name = "small-biter", position = {ccx + 10, ccy + 9}, force = "enemy"}; b.die()
+```
+Wait a couple of seconds, then check `python3 tools/inspect_replay.py`'s
+`inventory_delta` samples: `chest_a`'s iron-plate and `chest_b`'s
+copper-plate should each show up as their own separate delta - not
+merged into one, and not missing either one.
+
+## 5. Distant logistics network (roboport)
 
 Tests: a roboport network reachable from a zone's chunk but not
 physically standing in it - the one-time network roster plus ongoing
@@ -80,7 +98,7 @@ content sampling for providers/requesters.
 Wait a couple of seconds. If the provider chest doesn't show up in the
 network roster, move the chests closer to the roboport and re-run.
 
-## 5. Distant fluid chain
+## 6. Distant fluid chain
 
 Tests: fluid segments have no near/far split - `get_fluid_segment_fluid`
 reads a whole connected segment in one call however far it physically
@@ -91,7 +109,7 @@ runs, even while cropped.
 ```
 Wait a couple of seconds.
 
-## 6. Full recording mode
+## 7. Full recording mode
 
 Tests: every chunk gets recorded regardless of nearby combat.
 
@@ -99,7 +117,7 @@ Tests: every chunk gets recorded regardless of nearby combat.
 /c settings.global["rrec-full-recording-mode"] = {value = true}
 ```
 
-## 7. Turrets: damage, kills, and destruction
+## 8. Turrets: damage, kills, and destruction
 
 Tests: turret-dealt `damage_event`/`death_event`, a turret itself being
 destroyed, and fire creation/fade-out (`effect_created`/`effect_expired`)
@@ -118,7 +136,7 @@ Laser turrets need electricity to fire, which this scripted setup doesn't
 wire up - the gun and flamethrower turrets above are ammo/fluid-powered
 so they don't need it. Not required for this checklist.
 
-## 8. Vehicle destruction
+## 9. Vehicle destruction
 
 Tests: a vehicle being damaged and destroyed. Fully scripted, no action
 required.
@@ -128,7 +146,7 @@ required.
 ```
 Wait ~5 seconds.
 
-## 9. Kill classification: worm and spawner
+## 10. Kill classification: worm and spawner
 
 Tests: `hostile_kind` classification for worm turrets and spawners
 (biter/spitter classification is exercised elsewhere).
@@ -139,7 +157,7 @@ Tests: `hostile_kind` classification for worm turrets and spawners
 **Action:** Land one hit each - both are isolated, nothing else nearby to
 accidentally kill.
 
-## 10. Walls and gates: damage and destruction
+## 11. Walls and gates: damage and destruction
 
 Tests: `damage_event`/`death_event` for walls and gates specifically, not
 just turrets. Fully scripted, no action required.
@@ -149,7 +167,7 @@ just turrets. Fully scripted, no action required.
 ```
 Wait ~10 seconds.
 
-## 11. Spitter acid (isolated fight)
+## 12. Spitter acid (isolated fight)
 
 Tests: acid damage and the resulting fire/acid patch, from a real fight.
 
@@ -160,7 +178,7 @@ Tests: acid damage and the resulting fire/acid patch, from a real fight.
 hits in on you before it dies. Wait ~10 seconds afterward for the acid
 patch to fade.
 
-## 12. Vehicle combat: shooting vs. running over
+## 13. Vehicle combat: shooting vs. running over
 
 Tests: vehicle fuel/ammo/trunk inventory tracking, and a vehicle
 damaging/killing an enemy via both its weapon and physically running one
@@ -177,7 +195,7 @@ fuel it, and load its ammo - the tank is what you'll drive next.
 **Action:** From the tank, shoot `shoot_target`, then drive over
 `run_over_target`.
 
-## 13. Spidertron autopilot
+## 14. Spidertron autopilot
 
 Tests: an unmanned, autopilot-driven spidertron still counts as
 player-controlled. Fully scripted, no action required.
@@ -187,7 +205,7 @@ player-controlled. Fully scripted, no action required.
 ```
 Wait ~5 seconds.
 
-## 14. Player death, respawn, and corpse lifecycle
+## 15. Player death, respawn, and corpse lifecycle
 
 Tests: corpse provenance (`corpse_created`), its contents changing while
 it exists (`inventory_delta` with `owner_kind = corpse`, a partial change
@@ -205,7 +223,7 @@ Wait a couple of seconds.
 /c local c = game.player.surface.find_entities_filtered{type = "character-corpse"}[1]; if c then c.get_inventory(defines.inventory.character_corpse).clear() end
 ```
 
-## 15. Ground items
+## 16. Ground items
 
 Tests: a dropped item stack being tracked (`ground_item_created`, ongoing
 `inventory_delta` with `owner_kind = ground_item`), and its removal
@@ -221,7 +239,7 @@ of plates on the ground in front of you, then close your inventory.
 /c local items = game.player.surface.find_entities_filtered{type = "item-entity", position = game.player.position, radius = 10}; for _, i in ipairs(items) do i.destroy() end
 ```
 
-## 16. Fluids
+## 17. Fluids
 
 Tests: a fluid-holding entity appearing and its contents being tracked.
 
@@ -229,7 +247,7 @@ Tests: a fluid-holding entity appearing and its contents being tracked.
 /c local tank = game.player.surface.create_entity{name = "storage-tank", position = {game.player.position.x - 3, game.player.position.y}, force = "player"}; tank.insert_fluid{name = "water", amount = 500}
 ```
 
-## 17. Robot cargo
+## 18. Robot cargo
 
 Tests: a bot's carried inventory being tracked.
 
@@ -237,7 +255,7 @@ Tests: a bot's carried inventory being tracked.
 /c local bot = game.player.surface.create_entity{name = "logistic-robot", position = game.player.position, force = "player"}; bot.get_inventory(defines.inventory.robot_cargo).insert{name = "iron-plate", count = 5}
 ```
 
-## 18. Unit group formation
+## 19. Unit group formation
 
 Tests: biters forming up into a group is recorded as `unit_group_created`.
 
@@ -245,7 +263,7 @@ Tests: biters forming up into a group is recorded as `unit_group_created`.
 /c local g = game.player.surface.create_unit_group{position = {game.player.position.x + 10, game.player.position.y}, force = "enemy"}; local u1 = game.player.surface.create_entity{name = "small-biter", position = {game.player.position.x + 10, game.player.position.y}, force = "enemy"}; local u2 = game.player.surface.create_entity{name = "small-biter", position = {game.player.position.x + 11, game.player.position.y}, force = "enemy"}; g.add_member(u1); g.add_member(u2)
 ```
 
-## 19. Full recording mode off + reload regression
+## 20. Full recording mode off + reload regression
 
 Tests: turning full recording back off doesn't leave anything stuck
 recording forever, and the mod survives a reload without losing state.
@@ -288,7 +306,7 @@ Noted rather than silently skipped:
 
 * **Landmines** - not confirmed whether this mod tracks them at all
   (damage attribution, or even placement).
-* **Flame damage attribution** - step 7 confirms a fire patch is created
+* **Flame damage attribution** - step 8 confirms a fire patch is created
   and later fades (`effect_created`/`effect_expired`), but not whether
   standing in it generates its own `damage_event`s against whoever's in
   it, the way a direct hit does, or whether fire damage bypasses that
@@ -307,7 +325,7 @@ Noted rather than silently skipped:
 * **Electricity** - laser turrets, (non-burner) inserters, pumps, and
   roboports all need a real electric network to actually operate, which
   this checklist doesn't wire up anywhere. Gun and flamethrower turrets
-  are ammo/fluid-powered so they're unaffected, and steps 3/4 (the
+  are ammo/fluid-powered so they're unaffected, and steps 3/5 (the
   distant inserter and roboport tests) only depend on static
   position/target-resolution properties rather than anything requiring
   power to be flowing - but it's unconfirmed whether that holds for
