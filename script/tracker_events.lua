@@ -124,6 +124,8 @@ function TrackerEvents.container_contents(entity)
         for name, count in pairs(TrackerEvents.flatten_contents(chest.get_contents())) do
             contents[name] = (contents[name] or 0) + count
         end
+    elseif not ok_chest then
+        log("[replay-recorder] TrackerEvents: " .. entity.name .. ".get_inventory(chest) failed: " .. tostring(chest))
     end
 
     local ok_trash, trash = pcall(function() return entity.get_inventory(defines.inventory.logistic_container_trash) end)
@@ -131,6 +133,8 @@ function TrackerEvents.container_contents(entity)
         for name, count in pairs(TrackerEvents.flatten_contents(trash.get_contents())) do
             contents[name] = (contents[name] or 0) + count
         end
+    elseif not ok_trash then
+        log("[replay-recorder] TrackerEvents: " .. entity.name .. ".get_inventory(logistic_container_trash) failed: " .. tostring(trash))
     end
 
     return contents
@@ -142,6 +146,8 @@ function TrackerEvents.corpse_contents(entity)
     local ok, inv = pcall(function() return entity.get_inventory(defines.inventory.character_corpse) end)
     if ok and inv then
         return TrackerEvents.flatten_contents(inv.get_contents())
+    elseif not ok then
+        log("[replay-recorder] TrackerEvents: " .. entity.name .. ".get_inventory(character_corpse) failed: " .. tostring(inv))
     end
     return {}
 end
@@ -153,6 +159,8 @@ function TrackerEvents.held_stack_contents(entity)
     local ok, stack = pcall(function() return entity.held_stack end)
     if ok and stack and stack.valid_for_read then
         return {[stack.name] = stack.count}
+    elseif not ok then
+        log("[replay-recorder] TrackerEvents: " .. entity.name .. ".held_stack failed: " .. tostring(stack))
     end
     return {}
 end
@@ -164,6 +172,8 @@ function TrackerEvents.ground_item_contents(entity)
     local ok, stack = pcall(function() return entity.stack end)
     if ok and stack and stack.valid_for_read then
         return {[stack.name] = stack.count}
+    elseif not ok then
+        log("[replay-recorder] TrackerEvents: " .. entity.name .. ".stack failed: " .. tostring(stack))
     end
     return {}
 end
@@ -178,9 +188,11 @@ end
 function TrackerEvents.ensure_ground_item_registered(entity)
     if not entity.unit_number or storage.registered_ground_items[entity.unit_number] then return end
 
-    local ok = pcall(function() script.register_on_object_destroyed(entity) end)
+    local ok, err = pcall(function() script.register_on_object_destroyed(entity) end)
     if ok then
         storage.registered_ground_items[entity.unit_number] = true
+    else
+        log("[replay-recorder] TrackerEvents: register_on_object_destroyed failed for " .. entity.name .. ": " .. tostring(err))
     end
 end
 

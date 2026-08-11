@@ -31,6 +31,14 @@ local ItemChains = {}
 local BELT_TYPES = {["transport-belt"] = true, ["underground-belt"] = true, ["splitter"] = true, ["linked-belt"] = true}
 local CONTAINER_TYPES = {["container"] = true, ["logistic-container"] = true}
 
+-- Every pcall below guards confirmed API against a genuinely exotic/mid-
+-- tick-invalid entity - a real failure here would be notable, not routine,
+-- so it's worth a breadcrumb rather than silently vanishing into "the
+-- chain walk just found nothing" the way it used to.
+local function log_fail(context, err)
+    log("[replay-recorder] ItemChains: " .. context .. " failed: " .. tostring(err))
+end
+
 -- `belt_neighbours`'s confirmed shape: {inputs = array[LuaEntity], outputs
 -- = array[LuaEntity]} - the belt-connectable entities that feed into or
 -- take from this one. `underground_belt_neighbour`/`linked_belt_neighbour`
@@ -46,16 +54,22 @@ local function belt_neighbour_entities(entity)
         for _, e in ipairs(neighbours.outputs or {}) do
             if e.valid then table.insert(out, e) end
         end
+    elseif not ok then
+        log_fail(entity.name .. ".belt_neighbours", neighbours)
     end
 
     local ok2, underground = pcall(function() return entity.underground_belt_neighbour end)
     if ok2 and underground and underground.valid then
         table.insert(out, underground)
+    elseif not ok2 then
+        log_fail(entity.name .. ".underground_belt_neighbour", underground)
     end
 
     local ok3, linked = pcall(function() return entity.linked_belt_neighbour end)
     if ok3 and linked and linked.valid then
         table.insert(out, linked)
+    elseif not ok3 then
+        log_fail(entity.name .. ".linked_belt_neighbour", linked)
     end
 
     return out
@@ -77,13 +91,18 @@ local function servicing_inserters(entity)
             position = entity.position, radius = Config.inserter_search_radius(), type = "inserter"
         }
     end)
-    if not ok then return {} end
+    if not ok then
+        log_fail("find_entities_filtered (servicing_inserters) around " .. entity.name, found)
+        return {}
+    end
 
     local out = {}
     for _, inserter in ipairs(found) do
         if inserter.valid then
             local pt_ok, pickup = pcall(function() return inserter.pickup_target end)
+            if not pt_ok then log_fail("inserter.pickup_target", pickup) end
             local dt_ok, drop = pcall(function() return inserter.drop_target end)
+            if not dt_ok then log_fail("inserter.drop_target", drop) end
             if (pt_ok and pickup == entity) or (dt_ok and drop == entity) then
                 table.insert(out, inserter)
             end
@@ -95,18 +114,28 @@ end
 local function inserter_targets(entity)
     local out = {}
     local pt_ok, pickup = pcall(function() return entity.pickup_target end)
-    if pt_ok and pickup and pickup.valid then table.insert(out, pickup) end
+    if pt_ok and pickup and pickup.valid then
+        table.insert(out, pickup)
+    elseif not pt_ok then
+        log_fail("entity.pickup_target", pickup)
+    end
 
     local dt_ok, drop = pcall(function() return entity.drop_target end)
-    if dt_ok and drop and drop.valid then table.insert(out, drop) end
+    if dt_ok and drop and drop.valid then
+        table.insert(out, drop)
+    elseif not dt_ok then
+        log_fail("entity.drop_target", drop)
+    end
 
     -- No direct target entity (e.g. dropping onto a bare belt tile rather
     -- than a specific entity) - fall back to whatever's physically at the
     -- pickup/drop position.
     if not (pt_ok and pickup) then
         local pos_ok, pos = pcall(function() return entity.pickup_position end)
+        if not pos_ok then log_fail("entity.pickup_position", pos) end
         if pos_ok and pos then
             local ok, near = pcall(function() return entity.surface.find_entities_filtered{position = pos, radius = 0.5} end)
+            if not ok then log_fail("find_entities_filtered at pickup_position", near) end
             if ok then
                 for _, e in ipairs(near) do
                     if e.valid and e.unit_number ~= entity.unit_number then table.insert(out, e) end
@@ -116,8 +145,10 @@ local function inserter_targets(entity)
     end
     if not (dt_ok and drop) then
         local pos_ok, pos = pcall(function() return entity.drop_position end)
+        if not pos_ok then log_fail("entity.drop_position", pos) end
         if pos_ok and pos then
             local ok, near = pcall(function() return entity.surface.find_entities_filtered{position = pos, radius = 0.5} end)
+            if not ok then log_fail("find_entities_filtered at drop_position", near) end
             if ok then
                 for _, e in ipairs(near) do
                     if e.valid and e.unit_number ~= entity.unit_number then table.insert(out, e) end
@@ -161,6 +192,7 @@ local function belt_line_contents(entity)
         end
         return contents
     end)
+    if not ok then log_fail(entity.name .. " belt line contents", out) end
     return ok and out or {}
 end
 
@@ -264,6 +296,9 @@ function ItemChains.tick(active_zones, is_zone_active, chunk_area_fn)
                 area = area, type = {"transport-belt", "underground-belt", "splitter", "inserter"}
             }
         end)
+        if not ok then
+            log_fail("find_entities_filtered (chain seeds) for zone " .. zone_id, seeds)
+        end
 
         if ok and #seeds > 0 then
             local tl, br = area[1], area[2]
