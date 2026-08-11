@@ -70,11 +70,29 @@ local function ensure_storage()
     storage.unit_groups = nil
 end
 
+-- Logs the base game's version (and this mod's own) via log() into
+-- factorio-current.log - not replay.json, this is purely a debugging
+-- breadcrumb. Fires on a brand-new save and on any mod add/remove/update,
+-- not on an ordinary continued-session load (on_load can't safely do
+-- this - see the API note on that event). Exists because a real API
+-- mismatch has already been mistaken for a code bug once
+-- (fluid_chains.lua's confirmed-correct method names still erroring
+-- "doesn't contain key" on a real run, most plausibly a Factorio version
+-- skew) - having the exact version on record the next time settings
+-- change or the mod reloads (see the checklist's reload-regression step)
+-- settles that question instead of guessing at it again.
+local function log_environment()
+    local base_version = script.active_mods and script.active_mods["base"]
+    local mod_version = script.active_mods and script.active_mods["factorio-replay-recorder"]
+    log("[replay-recorder] environment: base=" .. tostring(base_version) .. " mod=" .. tostring(mod_version))
+end
+
 -- Brand new game/save only: reset all mod state and truncate replay.json.
 function Init.on_init()
     ensure_storage()
     Exporter.init()
     CombatZones.init()
+    log_environment()
 end
 
 -- Fires on mod add/remove/update for an EXISTING save, not just new games.
@@ -84,6 +102,7 @@ end
 function Init.on_configuration_changed()
     ensure_storage()
     CombatZones.init()
+    log_environment()
 end
 
 return Init
