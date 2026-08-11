@@ -58,18 +58,28 @@ local function belt_neighbour_entities(entity)
         log_fail(entity.name .. ".belt_neighbours", neighbours)
     end
 
-    local ok2, underground = pcall(function() return entity.underground_belt_neighbour end)
-    if ok2 and underground and underground.valid then
-        table.insert(out, underground)
-    elseif not ok2 then
-        log_fail(entity.name .. ".underground_belt_neighbour", underground)
+    -- Both of these fields only exist on their one matching entity type -
+    -- reading either on a plain transport-belt/splitter isn't a failure to
+    -- guard against, it's the overwhelmingly common case (every ordinary
+    -- belt segment), confirmed by a real log showing it firing on every
+    -- single transport-belt processed. Checking entity.type first avoids
+    -- both the pcall overhead and the log spam that produced.
+    if entity.type == "underground-belt" then
+        local ok2, underground = pcall(function() return entity.underground_belt_neighbour end)
+        if ok2 and underground and underground.valid then
+            table.insert(out, underground)
+        elseif not ok2 then
+            log_fail(entity.name .. ".underground_belt_neighbour", underground)
+        end
     end
 
-    local ok3, linked = pcall(function() return entity.linked_belt_neighbour end)
-    if ok3 and linked and linked.valid then
-        table.insert(out, linked)
-    elseif not ok3 then
-        log_fail(entity.name .. ".linked_belt_neighbour", linked)
+    if entity.type == "linked-belt" then
+        local ok3, linked = pcall(function() return entity.linked_belt_neighbour end)
+        if ok3 and linked and linked.valid then
+            table.insert(out, linked)
+        elseif not ok3 then
+            log_fail(entity.name .. ".linked_belt_neighbour", linked)
+        end
     end
 
     return out
