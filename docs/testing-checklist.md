@@ -81,10 +81,7 @@ not just an easy isolated case.
 ```
 /c local surface = game.player.surface; local base = game.player.position; local ccx = math.floor(base.x / 32) * 32; local ccy = math.floor((base.y + 96) / 32) * 32; local ins_a = surface.create_entity{name = "inserter", position = {ccx + 10, ccy + 10}, direction = defines.direction.east, force = "player"}; local chest_a = surface.create_entity{name = "iron-chest", position = {ccx + 11, ccy + 10}, force = "player"}; chest_a.get_inventory(defines.inventory.chest).insert{name = "iron-plate", count = 40}; local ins_b = surface.create_entity{name = "inserter", position = {ccx + 10, ccy + 12}, direction = defines.direction.south, force = "player"}; local chest_b = surface.create_entity{name = "iron-chest", position = {ccx + 10, ccy + 13}, force = "player"}; chest_b.get_inventory(defines.inventory.chest).insert{name = "copper-plate", count = 40}; local b = surface.create_entity{name = "small-biter", position = {ccx + 10, ccy + 9}, force = "enemy"}; b.die()
 ```
-Wait a couple of seconds, then check `python3 tools/inspect_replay.py`'s
-`inventory_delta` samples: `chest_a`'s iron-plate and `chest_b`'s
-copper-plate should each show up as their own separate delta - not
-merged into one, and not missing either one.
+Wait a couple of seconds.
 
 ## 5. Distant logistics network (roboport)
 
@@ -95,8 +92,7 @@ content sampling for providers/requesters.
 ```
 /c local surface = game.player.surface; local base = game.player.position; local ccx = math.floor(base.x / 32) * 32; local ccy = math.floor((base.y - 96) / 32) * 32; local rp = surface.create_entity{name = "roboport", position = {ccx + 31, ccy + 16}, force = "player"}; rp.insert{name = "construction-robot", count = 2}; local provider = surface.create_entity{name = "passive-provider-chest", position = {ccx + 34, ccy + 16}, force = "player"}; provider.get_inventory(defines.inventory.chest).insert{name = "iron-plate", count = 20}; local requester = surface.create_entity{name = "requester-chest", position = {ccx + 37, ccy + 16}, force = "player"}; local b = surface.create_entity{name = "small-biter", position = {ccx + 31, ccy + 15}, force = "enemy"}; b.die()
 ```
-Wait a couple of seconds. If the provider chest doesn't show up in the
-network roster, move the chests closer to the roboport and re-run.
+Wait a couple of seconds.
 
 ## 6. Distant fluid chain
 
@@ -127,22 +123,19 @@ so nothing blocks your movement, and each turret only ever fights its own
 target.
 
 ```
-/c local p = game.player.position; local surface = game.player.surface; local gt = surface.create_entity{name="gun-turret", position={p.x + 10, p.y}, force="player"}; gt.get_inventory(defines.inventory.turret_ammo).insert{name="firearm-magazine", count=10}; local gt_target = surface.create_entity{name="small-biter", position={p.x + 16, p.y}, force="enemy"}; gt_target.health = 1; local ft = surface.create_entity{name="flamethrower-turret", position={p.x + 50, p.y}, force="player"}; ft.insert_fluid{name="crude-oil", amount=100}; local ft_target = surface.create_entity{name="small-biter", position={p.x + 56, p.y}, force="enemy"}; ft_target.health = 1; local doomed = surface.create_entity{name="gun-turret", position={p.x + 90, p.y}, force="player"}; doomed.health = 1; surface.create_entity{name="behemoth-biter", position={p.x + 94, p.y}, force="enemy"}
+/c local p = game.player.position; local surface = game.player.surface; local gt = surface.create_entity{name="gun-turret", position={p.x + 10, p.y}, force="player"}; gt.get_inventory(defines.inventory.turret_ammo).insert{name="firearm-magazine", count=10}; local gt_target = surface.create_entity{name="small-biter", position={p.x + 16, p.y}, force="enemy"}; gt_target.health = 1; local ft = surface.create_entity{name="flamethrower-turret", position={p.x + 50, p.y}, force="player"}; ft.insert_fluid{name="crude-oil", amount=100}; local ft_target = surface.create_entity{name="small-biter", position={p.x + 50, p.y - 10}, force="enemy"}; ft_target.health = 1; local doomed = surface.create_entity{name="gun-turret", position={p.x + 90, p.y}, force="player"}; doomed.health = 1; surface.create_entity{name="behemoth-biter", position={p.x + 94, p.y}, force="enemy"}
 ```
 Wait ~10 seconds for the kills/destruction, then ~10 more for the flame
 patch to fade.
 
-Laser turrets need electricity to fire, which this scripted setup doesn't
-wire up - the gun and flamethrower turrets above are ammo/fluid-powered
-so they don't need it. Not required for this checklist.
-
 ## 9. Vehicle destruction
 
-Tests: a vehicle being damaged and destroyed. Fully scripted, no action
-required.
+Tests: a vehicle being damaged and destroyed, and (via a plain parked
+car alongside it) vehicle-type diversity for the checklist as a whole.
+Fully scripted, no action required.
 
 ```
-/c local p = game.player.position; local surface = game.player.surface; local weak_tank = surface.create_entity{name="tank", position={p.x + 130, p.y}, force="player"}; weak_tank.health = 1; surface.create_entity{name="small-biter", position={p.x + 132, p.y}, force="enemy"}
+/c local p = game.player.position; local surface = game.player.surface; local weak_tank = surface.create_entity{name="tank", position={p.x + 40, p.y - 40}, force="player"}; weak_tank.health = 1; surface.create_entity{name="small-biter", position={p.x + 42, p.y - 40}, force="enemy"}; surface.create_entity{name="car", position={p.x + 46, p.y - 40}, force="player"}
 ```
 Wait ~5 seconds.
 
@@ -160,10 +153,14 @@ accidentally kill.
 ## 11. Walls and gates: damage and destruction
 
 Tests: `damage_event`/`death_event` for walls and gates specifically, not
-just turrets. Fully scripted, no action required.
+just turrets. Biters generally ignore a bare wall/gate with nothing
+behind it - each one here has a turret boxed in behind it (walls on the
+other three sides) so the only way to it is through the wall/gate being
+tested, giving the biter a real reason to attack it. Fully scripted, no
+action required.
 
 ```
-/c local p = game.player.position; local surface = game.player.surface; local wall = surface.create_entity{name="stone-wall", position={p.x + 160, p.y}, force="player"}; wall.health = 1; local gate = surface.create_entity{name="gate", position={p.x + 162, p.y}, force="player"}; gate.health = 1; surface.create_entity{name="small-biter", position={p.x + 161, p.y + 2}, force="enemy"}
+/c local p = game.player.position; local surface = game.player.surface; local wx, wy = p.x - 60, p.y + 15; surface.create_entity{name="gun-turret", position={wx, wy}, force="player"}; surface.create_entity{name="stone-wall", position={wx - 1, wy}, force="player"}; surface.create_entity{name="stone-wall", position={wx + 1, wy}, force="player"}; surface.create_entity{name="stone-wall", position={wx, wy - 1}, force="player"}; local test_wall = surface.create_entity{name="stone-wall", position={wx, wy + 1}, force="player"}; test_wall.health = 1; surface.create_entity{name="small-biter", position={wx, wy + 3}, force="enemy"}; local gx, gy = p.x - 60, p.y - 15; surface.create_entity{name="gun-turret", position={gx, gy}, force="player"}; surface.create_entity{name="stone-wall", position={gx - 1, gy}, force="player"}; surface.create_entity{name="stone-wall", position={gx + 1, gy}, force="player"}; surface.create_entity{name="stone-wall", position={gx, gy - 1}, force="player"}; local test_gate = surface.create_entity{name="gate", position={gx, gy + 1}, force="player"}; test_gate.health = 1; surface.create_entity{name="small-biter", position={gx, gy + 3}, force="enemy"}
 ```
 Wait ~10 seconds.
 
@@ -182,18 +179,20 @@ patch to fade.
 
 Tests: vehicle fuel/ammo/trunk inventory tracking, and a vehicle
 damaging/killing an enemy via both its weapon and physically running one
-over - two separate targets so both are confirmed independently.
+over - two separate targets, one on each side, so both are confirmed
+independently and you know which is which. (`car` diversity coverage
+already comes from step 9 - no need to place one here too.)
 
 ```
-/c local surface = game.player.surface; game.player.insert{name="car", count=1}; game.player.insert{name="tank", count=1}; game.player.insert{name="solid-fuel", count=20}; game.player.insert{name="firearm-magazine", count=40}; game.player.insert{name="cannon-shell", count=10}
+/c local surface = game.player.surface; game.player.insert{name="tank", count=1}; game.player.insert{name="solid-fuel", count=20}; game.player.insert{name="firearm-magazine", count=40}; game.player.insert{name="cannon-shell", count=10}
 ```
-**Action:** Place the car nearby (just needs to exist). Place the tank,
-fuel it, and load its ammo - the tank is what you'll drive next.
+**Action:** Place the tank, fuel it, and load its ammo.
 ```
-/c local p = game.player.position; local surface = game.player.surface; local shoot_target = surface.create_entity{name="small-biter", position={p.x + 10, p.y + 5}, force="enemy"}; shoot_target.health = 1; local run_over_target = surface.create_entity{name="small-biter", position={p.x + 15, p.y + 5}, force="enemy"}; run_over_target.health = 1
+/c local p = game.player.position; local surface = game.player.surface; local shoot_target = surface.create_entity{name="small-biter", position={p.x - 10, p.y + 5}, force="enemy"}; shoot_target.health = 1; local run_over_target = surface.create_entity{name="small-biter", position={p.x + 10, p.y + 5}, force="enemy"}; run_over_target.health = 1
 ```
-**Action:** From the tank, shoot `shoot_target`, then drive over
-`run_over_target`.
+**Action:** From the tank, shoot the biter on your **left/west**
+(`shoot_target`), then drive over the biter on your **right/east**
+(`run_over_target`).
 
 ## 14. Spidertron autopilot
 
@@ -330,3 +329,19 @@ Noted rather than silently skipped:
   position/target-resolution properties rather than anything requiring
   power to be flowing - but it's unconfirmed whether that holds for
   everything else these unpowered entities are asked to do here.
+* **Laser turrets** - not exercised anywhere in this checklist (they need
+  the electric network above to fire); unconfirmed whether their damage/
+  destruction is tracked the same way gun/flamethrower turrets are.
+* **Health regeneration** - neither the player's natural health
+  regeneration nor biters' (both passive, no item/action involved)
+  produce any event here; unconfirmed whether either is tracked at all,
+  or how it'd be distinguished from healing-item/repair-pack effects if
+  so.
+* **Repairs** - repair packs (player-applied) and construction bots
+  (automatic, for player-force structures) aren't exercised anywhere;
+  unconfirmed whether a repaired entity's health increase is tracked as
+  its own event or is indistinguishable from any other health change.
+* **Status effects** - a player gooed/slowed by spitter acid, and a biter
+  slowed by a thrown slowdown capsule, aren't exercised anywhere;
+  unconfirmed whether either is tracked as a distinct event or state, as
+  opposed to just the damage_event from the acid hit itself.

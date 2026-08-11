@@ -138,6 +138,35 @@ def check_vehicle_diversity(events):
     return True, f"saw {', '.join(sorted(types))}"
 
 
+def check_inserter_chest_disambiguation(events):
+    """Step 4: two independent inserter+chest pairs, placed within each
+    other's search radius so each chest is a real candidate for the
+    *other* inserter too. iron-plate should land on one container owner,
+    copper-plate on a different one - never both on the same owner key,
+    which would mean the chain walk merged or misattributed the pair."""
+    owners_with_item = collections.defaultdict(set)
+    for e in events:
+        if e.get("type") != "inventory_delta" or e.get("data", {}).get("owner_kind") != "container":
+            continue
+        owner = e["data"].get("owner")
+        for change in e["data"].get("changes", []):
+            item = change.get("item")
+            if item and change.get("delta", 0) > 0:
+                owners_with_item[owner].add(item)
+
+    iron_owners = {o for o, items in owners_with_item.items() if "iron-plate" in items}
+    copper_owners = {o for o, items in owners_with_item.items() if "copper-plate" in items}
+
+    if not iron_owners:
+        return False, "no container owner ever received iron-plate (chest_a)"
+    if not copper_owners:
+        return False, "no container owner ever received copper-plate (chest_b)"
+    overlap = iron_owners & copper_owners
+    if overlap:
+        return False, f"iron-plate and copper-plate landed on the same container owner ({', '.join(sorted(overlap))}) - chest_a/chest_b got merged"
+    return True, f"iron-plate -> {', '.join(sorted(iron_owners))}, copper-plate -> {', '.join(sorted(copper_owners))}"
+
+
 def check_owner_kinds(events):
     kinds = set(_values(events, "inventory_delta", ["owner_kind"]))
     required = {"player", "vehicle", "container", "corpse", "robot", "inserter_hand", "ground_item"}
@@ -153,6 +182,7 @@ CHECKS = [
     ("chunk_snapshot has non-empty statics", "8", check_statics_nonempty),
     ("chunk_snapshot has non-empty tiles", "1-2", check_tiles_nonempty),
     ("chunk_snapshot has a non-empty logistics roster", "5", check_logistics_nonempty),
+    ("inserter-to-chest servicing disambiguates a nearby pair", "4", check_inserter_chest_disambiguation),
     ("zone_created recorded", "1-2", present("zone_created")),
     ("zone_expired recorded", "2-6", present("zone_expired")),
     ("mobile_positions recorded", "1-2", present("mobile_positions")),
