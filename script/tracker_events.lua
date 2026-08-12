@@ -302,14 +302,9 @@ function TrackerEvents.on_player_dropped_item(event)
 
     -- TEMPORARY (PR #13): ground_item_created/ground_item_removed and
     -- inventory_delta's ground_item owner_kind all stayed at 0 events in
-    -- a real session, with zero evidence of why - unlike the corpse and
-    -- fluid cases, this event was never probed at all, and the step
-    -- itself is the one manual UI action in the whole checklist (open
-    -- inventory, click the stack, press Z), so this could be either a
-    -- code issue (event.entity nil/invalid/no unit_number, same category
-    -- of bug the corpse fix just found) or simply the drop never
-    -- happening in-game. Log unconditionally - this event is rare enough
-    -- (one manual drop per checklist run) that spam isn't a concern.
+    -- a real session, with zero evidence of why. Log unconditionally -
+    -- this event is rare enough (one manual drop per checklist run) that
+    -- spam isn't a concern.
     local probe_msg = "[replay-recorder-probe] on_player_dropped_item: event.entity=" .. tostring(entity)
     if entity then
         probe_msg = probe_msg .. " valid=" .. tostring(entity.valid)
@@ -319,11 +314,30 @@ function TrackerEvents.on_player_dropped_item(event)
     end
     log(probe_msg)
 
-    if not entity or not entity.valid or not entity.unit_number then return end
+    if not entity or not entity.valid then return end
 
+    -- unit_number is no longer required to log this creation event - a
+    -- corpse in an earlier round turned out to only sometimes have one,
+    -- and requiring it there silently rejected every real corpse. If
+    -- item-entity turns out to have the same characteristic,
+    -- ensure_ground_item_registered (needs a stable id for the
+    -- on_object_destroyed registry, not just a one-time event) still
+    -- gates on unit_number and simply skips registration when absent -
+    -- ongoing content/removal tracking for such an item would be a real,
+    -- known gap, but this creation event no longer silently disappears
+    -- with it.
     TrackerEvents.ensure_ground_item_registered(entity)
+    local owner_key
+    if entity.unit_number then
+        owner_key = "ground_item_" .. entity.unit_number
+    else
+        owner_key = "ground_item_dropped_" .. event.player_index .. "_" .. game.tick
+        log("[replay-recorder] TrackerEvents: dropped item-entity (" .. entity.name .. ") has no unit_number - "
+            .. "ground_item_created still recorded via " .. owner_key .. ", but ongoing content/removal tracking "
+            .. "for it needs a stable id this doesn't have")
+    end
     Exporter.log_event(game.tick, "ground_item_created", {
-        owner = "ground_item_" .. entity.unit_number,
+        owner = owner_key,
         position = entity.position,
         player_index = event.player_index,
     })
