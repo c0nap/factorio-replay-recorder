@@ -113,6 +113,52 @@ end
 -- on the failure path costs nothing when nothing's failing, and turns a
 -- silent "why didn't this work" into a concrete error message in
 -- factorio-current.log the next time it reproduces.
+-- TEMPORARY (PR #13): a live console probe already confirmed entity.fluidbox
+-- exists (userdata) while every LuaEntity-level segment method
+-- (get_fluid_box_neighbours/has_fluid_segment/get_fluid_segment_fluid/
+-- get_fluid_segment_id/get_fluid_segment_contents) errors with "doesn't
+-- contain key" - but that probe used a freshly created, EMPTY tank, so
+-- entity.fluidbox[1] came back ambiguous (nil-because-empty and
+-- nil-because-not-indexable-that-way both hit the same branch). This
+-- probes the real thing instead: the first seed actually encountered
+-- during real play with fluid already in it (every checklist fluid step
+-- inserts fluid before this ever runs), pcall-guarding each candidate
+-- separately so nil and ERROR are never conflated. Logs once per session.
+-- Remove once the real shape is known and fluid_chains.lua is rewritten
+-- against it.
+local function probe_fluidbox_shape(entity)
+    if storage.fluid_api_probe_done then return end
+    storage.fluid_api_probe_done = true
+
+    local function p(name, fn)
+        local ok, v = pcall(fn)
+        if not ok then return name .. "=ERROR(" .. tostring(v) .. ")" end
+        if v == nil then return name .. "=nil" end
+        return name .. "=" .. tostring(v) .. "(" .. type(v) .. ")"
+    end
+
+    local parts = {p("entity.fluidbox", function() return entity.fluidbox end)}
+
+    local ok_box, box = pcall(function() return entity.fluidbox and entity.fluidbox[1] end)
+    if ok_box and box ~= nil then
+        table.insert(parts, p("fluidbox[1]", function() return box end))
+        table.insert(parts, p("fluidbox[1].owner", function() return box.owner end))
+        table.insert(parts, p("fluidbox[1].amount", function() return box.amount end))
+        table.insert(parts, p("fluidbox[1].name", function() return box.name end))
+        table.insert(parts, p("fluidbox[1].get_connections", function() return box.get_connections end))
+        table.insert(parts, p("fluidbox[1].get_fluid_segment_contents", function() return box.get_fluid_segment_contents end))
+        table.insert(parts, p("fluidbox[1].get_fluid_segment_id", function() return box.get_fluid_segment_id end))
+    else
+        table.insert(parts, ok_box and "fluidbox[1]=nil" or ("fluidbox[1]=ERROR(" .. tostring(box) .. ")"))
+    end
+
+    table.insert(parts, p("fluidbox.get_connections(1)", function() return entity.fluidbox.get_connections(1) end))
+    table.insert(parts, p("fluidbox.get_fluid_segment_contents(1)", function() return entity.fluidbox.get_fluid_segment_contents(1) end))
+    table.insert(parts, p("fluidbox.get_fluid_segment_id(1)", function() return entity.fluidbox.get_fluid_segment_id(1) end))
+
+    log("[replay-recorder-probe] fluidbox shape on " .. entity.name .. ": " .. table.concat(parts, " | "))
+end
+
 local function process_zone(surface, area, visited_boxes, reported)
     local ok, seeds = pcall(function()
         return surface.find_entities_filtered{area = area, type = FLUID_SEED_TYPES}
@@ -128,7 +174,8 @@ local function process_zone(surface, area, visited_boxes, reported)
             if not count_ok then
                 log("[replay-recorder] FluidChains: " .. seed.name .. ".fluids_count failed: " .. tostring(count))
             end
-            if count_ok and count then
+            if count_ok and count and count > 0 then
+                probe_fluidbox_shape(seed)
                 for index = 1, count do
                     local key = seed.unit_number .. "_" .. index
                     if not visited_boxes[key] then

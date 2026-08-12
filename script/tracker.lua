@@ -186,6 +186,27 @@ function Tracker.on_player_died(event)
     -- just created, not a still-unlooted one left over from an earlier
     -- death this same player never fully cleared.
     local corpses = player.surface.find_entities_filtered{type = "character-corpse"}
+
+    -- TEMPORARY (PR #13): corpse_created stayed at 0 events across a full
+    -- real session that DID include a death+respawn (player_respawn was
+    -- recorded), with no error anywhere - the loop below found zero
+    -- matches and just silently moved on. Rather than guess why (wrong
+    -- tick-of-death assumption? corpse not actually created synchronously?
+    -- a property name off by a character?), log every candidate this scan
+    -- actually finds, unconditionally, so the next real death answers it
+    -- directly instead of needing another guess. Remove once resolved.
+    local probe = {}
+    for _, corpse in pairs(corpses) do
+        if corpse.valid then
+            table.insert(probe, "unit_number=" .. tostring(corpse.unit_number)
+                .. " player_index=" .. tostring(corpse.character_corpse_player_index)
+                .. " tick_of_death=" .. tostring(corpse.character_corpse_tick_of_death))
+        end
+    end
+    log("[replay-recorder-probe] on_player_died: event.player_index=" .. tostring(event.player_index)
+        .. " game.tick=" .. tostring(game.tick) .. " candidates_found=" .. #corpses
+        .. (#probe > 0 and (" [" .. table.concat(probe, "; ") .. "]") or ""))
+
     for _, corpse in pairs(corpses) do
         if corpse.valid and corpse.unit_number and corpse.character_corpse_player_index == event.player_index
             and corpse.character_corpse_tick_of_death == game.tick then
@@ -268,6 +289,24 @@ end
 function Tracker.on_trigger_created_entity(event)
     local entity = event.entity
     if not entity or not entity.valid then return end
+
+    -- TEMPORARY (PR #13): effect_created/effect_expired stayed at 0 events
+    -- across a full real session that included both the flamethrower
+    -- turret test (step 11) and a real spitter fight (step 15) - the
+    -- `entity.type ~= "fire"` filter below has never actually been
+    -- confirmed against real data, it was carried over from before this
+    -- project started checking API assumptions this strictly. Log every
+    -- distinct (name, type) this event ever produces, once each, so the
+    -- next real session shows exactly what a flamethrower's flame patch
+    -- and a spitter's acid patch actually report as their type - remove
+    -- this and fix the filter once that's known.
+    storage.trigger_entity_probe_seen = storage.trigger_entity_probe_seen or {}
+    local probe_key = entity.name .. "/" .. entity.type
+    if not storage.trigger_entity_probe_seen[probe_key] then
+        storage.trigger_entity_probe_seen[probe_key] = true
+        log("[replay-recorder-probe] on_trigger_created_entity: name=" .. entity.name .. " type=" .. entity.type)
+    end
+
     if entity.type ~= "fire" then return end
 
     local in_zone = CombatZones.notify_and_check(entity.surface, entity.position)
