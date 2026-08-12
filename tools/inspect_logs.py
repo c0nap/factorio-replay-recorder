@@ -33,20 +33,21 @@ import sys
 # other mod) writes to the same log file.
 LOG_MARKER = "[replay-recorder-diagnostics]"
 
-# A LuaProfiler embedded in a LocalisedString resolves to a human-readable
-# duration like "5.432 ms" or "820 µs" - restricting the unit to a known
-# token list (rather than a generic "rest of the word") avoids a duration
-# with no unit at all (e.g. a bare "0") accidentally swallowing the next
-# field's key into its own capture.
+# A LuaProfiler embedded in a LocalisedString resolves to text of the form
+# "Duration: 0.085300ms" - confirmed against a real log sample, not
+# guessed: the literal "Duration: " prefix, and no space between the
+# number and its unit. Restricting the unit to a known token list (rather
+# than a generic "rest of the word") avoids swallowing the next field's
+# key into this one's capture.
 UNIT = r"(?:ns|us|µs|μs|ms|s)"
-DURATION = rf"[\d.]+(?:\s*{UNIT})?"
+DURATION = rf"Duration:\s*[\d.]+\s*{UNIT}"
 FIELD_RE = re.compile(
     rf"tick=(?P<tick>\d+)"
     rf"\s+tick_time=(?P<tick_time>{DURATION})"
     rf"\s+scan_time=(?P<scan_time>{DURATION})"
     rf"(?:\s+write_time=(?P<write_time>{DURATION}))?"
 )
-DURATION_RE = re.compile(r"^([\d.]+)\s*(ns|us|µs|μs|ms|s)?$")
+DURATION_RE = re.compile(rf"^Duration:\s*([\d.]+)\s*({UNIT})$")
 DURATION_UNIT_TO_MS = {
     "ns": 1e-6,
     "us": 1e-3,
@@ -145,15 +146,75 @@ def _stats(values_ms):
     }
 
 
-def print_report(samples, malformed):
+def top_slowest(samples, field, n):
+    """Returns the n samples with the highest value for `field` (skipping
+    samples where it's None, e.g. write_time on a non-flush tick), sorted
+    slowest-first. A single min/p50/mean/p95/max line can't tell you
+    whether the max was one freak tick or the tail of a longer stall -
+    this is what actually answers that."""
+    with_value = [s for s in samples if s[field] is not None]
+    return sorted(with_value, key=lambda s: s[field], reverse=True)[:n]
+
+
+def find_slow_streaks(samples, field, threshold_ms):
+    """Groups consecutive-tick samples whose `field` value is at or above
+    threshold_ms into runs ("streaks") - a single p95/max stat can't tell
+    a one-tick freak spike apart from many back-to-back ticks each a
+    little slow, which is what actually reads as a stutter to a player
+    (e.g. "each tick taking maybe half a second for the span of multiple
+    seconds"). A gap in tick numbers (a sample that didn't get logged)
+    ends a streak rather than bridging it, since that's not something a
+    player would perceive as one continuous stall.
+
+    Returns a list of dicts: start_tick, end_tick, num_ticks, peak_ms,
+    total_ms - sorted by total_ms descending (the streaks that add up to
+    the most real stall time first, not just the single worst tick)."""
+    streaks = []
+    current = []
+
+    def flush_current():
+        if len(current) >= 2:
+            values = [v for _, v in current]
+            streaks.append({
+                "start_tick": current[0][0],
+                "end_tick": current[-1][0],
+                "num_ticks": len(current),
+                "peak_ms": max(values),
+                "total_ms": sum(values),
+            })
+
+    for s in samples:
+        value = s[field]
+        if value is not None and value >= threshold_ms:
+            if current and s["tick"] != current[-1][0] + 1:
+                flush_current()
+                current = []
+            current.append((s["tick"], value))
+        else:
+            flush_current()
+            current = []
+    flush_current()
+
+    return sorted(streaks, key=lambda st: st["total_ms"], reverse=True)
+
+
+def print_report(samples, malformed, top_n, streak_threshold_ms):
     print("=" * 70)
     print("Factorio Replay Recorder - performance diagnostics summary")
     print("=" * 70)
 
     if not samples:
-        print("No diagnostics lines found. Either the recording you're")
-        print("inspecting didn't have rrec-diagnostics-enabled turned on,")
-        print("or --path isn't pointing at the right log file.")
+        if malformed:
+            # The marker was found, just not in the shape FIELD_RE expects -
+            # a real format mismatch worth surfacing precisely, not the
+            # generic "nothing here" message below.
+            print(f"Found {malformed} line(s) with the diagnostics marker, but none")
+            print("matched the expected field format. Factorio's LuaProfiler text")
+            print("may have changed shape - paste a raw sample line if this shows up.")
+        else:
+            print("No diagnostics lines found. Either the recording you're")
+            print("inspecting didn't have rrec-diagnostics-enabled turned on,")
+            print("or --path isn't pointing at the right log file.")
         return
 
     ticks = [s["tick"] for s in samples]
@@ -168,8 +229,10 @@ def print_report(samples, malformed):
         "write_time": "write (Exporter.flush - only present on flush ticks)",
     }
     print("\nPer-tick timings (milliseconds):")
+    field_stats = {}
     for field, label in labels.items():
         stats = _stats([s[field] for s in samples if s[field] is not None])
+        field_stats[field] = stats
         if not stats:
             continue
         print(f"  {label}:")
@@ -178,12 +241,51 @@ def print_report(samples, malformed):
             f"mean={stats['mean']:.3f}  p95={stats['p95']:.3f}  max={stats['max']:.3f}"
         )
 
+    print(f"\nSlowest {top_n} tick(s) by field (tick number: value ms):")
+    for field, label in labels.items():
+        if not field_stats.get(field):
+            continue
+        worst = top_slowest(samples, field, top_n)
+        print(f"  {label}:")
+        for s in worst:
+            print(f"    tick {s['tick']}: {s[field]:.3f}ms")
+
+    print("\nSlow streaks (consecutive ticks at/above the threshold below -")
+    print("this is what actually reads as a stutter, not just one freak tick):")
+    for field, label in labels.items():
+        stats = field_stats.get(field)
+        if not stats:
+            continue
+        threshold = streak_threshold_ms if streak_threshold_ms is not None else stats["p95"]
+        streaks = find_slow_streaks(samples, field, threshold)
+        print(f"  {label} (threshold={threshold:.3f}ms):")
+        if not streaks:
+            print("    none - no two consecutive ticks both crossed the threshold")
+            continue
+        for st in streaks[:top_n]:
+            span_ticks = st["end_tick"] - st["start_tick"] + 1
+            print(
+                f"    ticks {st['start_tick']}-{st['end_tick']} ({span_ticks} ticks, "
+                f"~{span_ticks / 60:.2f}s @ 60 UPS): peak={st['peak_ms']:.3f}ms  "
+                f"total={st['total_ms']:.3f}ms"
+            )
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
         "--path", "-p",
         help="Path to factorio-current.log. Defaults to the standard Factorio user data location for your OS.",
+    )
+    parser.add_argument(
+        "--top-n", "-n", type=int, default=10,
+        help="How many slowest ticks/streaks to list per field (default 10).",
+    )
+    parser.add_argument(
+        "--slow-threshold-ms", type=float, default=None,
+        help="Minimum value (ms) for a tick to count toward a slow streak. "
+             "Defaults to that field's own p95 for this log, so it adapts "
+             "to the session instead of using one fixed number for every save.",
     )
     args = parser.parse_args()
 
@@ -198,7 +300,7 @@ def main():
 
     samples, malformed = load_samples(path)
     print(f"Reading: {path}\n")
-    print_report(samples, malformed)
+    print_report(samples, malformed, args.top_n, args.slow_threshold_ms)
 
 
 if __name__ == "__main__":

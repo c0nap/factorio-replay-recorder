@@ -5,6 +5,8 @@
 -- writes them out to script-output/replay.json as newline-delimited JSON
 -- (JSONL) whenever Exporter.flush() is called - see control.lua's on_tick
 -- handler for the flush schedule.
+local Config = require("script.config")
+
 local Exporter = {}
 
 -- Starts a fresh replay.json for a new game. Only call this for a true
@@ -22,8 +24,25 @@ function Exporter.log_event(tick, event_type, payload)
     })
 end
 
+-- Real diagnostics data confirmed this is where a full-recording backfill
+-- burst actually hurts: the earlier chunk-backfill-per-tick fix keeps the
+-- SCAN side cheap (dump_static_chunk_data's engine calls, spread across
+-- many ticks), but every one of those scans still queues a full
+-- chunk_snapshot (tiles + statics + logistics) into storage.replay_buffer,
+-- and flush() used to serialize+write the ENTIRE buffer in one call
+-- regardless of how large it had grown - on a real run this meant one
+-- single flush call taking 8.3+ SECONDS once ~800 accumulated
+-- chunk_snapshots all landed in the same flush window. Capping how many
+-- entries get written per call (oldest first, FIFO) and leaving the rest
+-- queued - combined with control.lua flushing early once the backlog
+-- crosses that same cap, instead of only on the fixed timer - turns one
+-- multi-second freeze into many small, bounded ones instead.
 function Exporter.flush()
-    if #storage.replay_buffer == 0 then return end
+    local buffer = storage.replay_buffer
+    if #buffer == 0 then return end
+
+    local limit = Config.max_buffered_events()
+    local n = math.min(limit, #buffer)
 
     -- Batch write as JSON Lines (JSONL) for easier streaming in external
     -- apps. Built as an array and joined once with table.concat rather than
@@ -32,12 +51,25 @@ function Exporter.flush()
     -- gets quadratically slower during a big fight with thousands of events
     -- queued up between flushes.
     local lines = {}
-    for i, entry in ipairs(storage.replay_buffer) do
-        lines[i] = helpers.table_to_json(entry)
+    for i = 1, n do
+        lines[i] = helpers.table_to_json(buffer[i])
     end
 
     helpers.write_file("replay.json", table.concat(lines, "\n") .. "\n", true) -- true = append
-    storage.replay_buffer = {}
+
+    if n == #buffer then
+        storage.replay_buffer = {}
+    else
+        -- Overflow beyond the cap stays queued for the next flush instead
+        -- of being written now (defeating the whole point) or dropped
+        -- (losing data) - shifted down to the front so ordering in the
+        -- file stays FIFO/chronological across multiple capped flushes.
+        local remaining = {}
+        for i = n + 1, #buffer do
+            table.insert(remaining, buffer[i])
+        end
+        storage.replay_buffer = remaining
+    end
 end
 
 return Exporter

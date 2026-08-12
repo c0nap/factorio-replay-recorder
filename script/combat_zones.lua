@@ -179,6 +179,8 @@ local function dump_static_chunk_data(surface, chunk_x, chunk_y)
                 if etype == "unit-spawner" then
                     table.insert(spawners, record)
                 end
+            else
+                log("[replay-recorder] CombatZones: static record failed for " .. etype .. ": " .. tostring(record))
             end
         end
     end
@@ -209,6 +211,9 @@ local function dump_static_chunk_data(surface, chunk_x, chunk_y)
     -- it goes wrong, the rest of the chunk snapshot (tiles/statics, the
     -- part every consumer actually depends on) still gets written.
     local ok, logistics_context = pcall(Logistics.context_for_area, surface, area, force_names)
+    if not ok then
+        log("[replay-recorder] CombatZones: Logistics.context_for_area failed: " .. tostring(logistics_context))
+    end
 
     Exporter.log_event(game.tick, "chunk_snapshot", {
         chunk = {chunk_x, chunk_y},

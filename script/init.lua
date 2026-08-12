@@ -39,14 +39,15 @@ local function ensure_storage()
     storage.belt_line_cache = storage.belt_line_cache or {}
     storage.fluid_cache = storage.fluid_cache or {}
 
-    -- A dying character's unit_number -> {player_index, player_name,
-    -- death_tick, killer}, bridging on_entity_died (where the info is
-    -- available but the corpse doesn't exist yet) to on_post_entity_died
-    -- (where the corpse exists but only the original unit_number is
-    -- carried over) - see Tracker.on_entity_died/on_post_entity_died.
-    -- Always cleared by on_post_entity_died the tick after it's written,
-    -- so this never holds more than one tick's worth of pending deaths.
-    storage.pending_corpse_info = storage.pending_corpse_info or {}
+    -- Confirmed against the real API: player corpses never go through
+    -- on_post_entity_died at all (event.corpses is always empty for a
+    -- player's own death), so the on_entity_died -> on_post_entity_died
+    -- handoff this table existed for never actually worked - corpse
+    -- creation is now handled entirely within Tracker.on_player_died
+    -- instead, which needs no pending state of its own. Explicitly
+    -- cleared here so saves from before this fix don't keep carrying the
+    -- dead table around.
+    storage.pending_corpse_info = nil
 
     -- unit_number -> true for every ground item-entity registered via
     -- script.register_on_object_destroyed, so TrackerEvents.on_object_destroyed
@@ -69,11 +70,29 @@ local function ensure_storage()
     storage.unit_groups = nil
 end
 
+-- Logs the base game's version (and this mod's own) via log() into
+-- factorio-current.log - not replay.json, this is purely a debugging
+-- breadcrumb. Fires on a brand-new save and on any mod add/remove/update,
+-- not on an ordinary continued-session load (on_load can't safely do
+-- this - see the API note on that event). Exists because a real API
+-- mismatch has already been mistaken for a code bug once
+-- (fluid_chains.lua's confirmed-correct method names still erroring
+-- "doesn't contain key" on a real run, most plausibly a Factorio version
+-- skew) - having the exact version on record the next time settings
+-- change or the mod reloads (see the checklist's reload-regression step)
+-- settles that question instead of guessing at it again.
+local function log_environment()
+    local base_version = script.active_mods and script.active_mods["base"]
+    local mod_version = script.active_mods and script.active_mods["factorio-replay-recorder"]
+    log("[replay-recorder] environment: base=" .. tostring(base_version) .. " mod=" .. tostring(mod_version))
+end
+
 -- Brand new game/save only: reset all mod state and truncate replay.json.
 function Init.on_init()
     ensure_storage()
     Exporter.init()
     CombatZones.init()
+    log_environment()
 end
 
 -- Fires on mod add/remove/update for an EXISTING save, not just new games.
@@ -83,6 +102,7 @@ end
 function Init.on_configuration_changed()
     ensure_storage()
     CombatZones.init()
+    log_environment()
 end
 
 return Init

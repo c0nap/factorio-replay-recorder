@@ -50,6 +50,8 @@ local function find_networks(surface, area, force_names)
                         by_id[network.network_id] = network
                     end
                 end
+            elseif not ok then
+                log("[replay-recorder] Logistics: find_logistic_networks_by_construction_area failed: " .. tostring(found))
             end
         end
     end
