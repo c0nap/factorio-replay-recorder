@@ -11,7 +11,10 @@ the moment you use one; that's expected and harmless here.
 Most kills/damage/destruction below are scripted with weak/one-hit
 targets placed apart from each other, so you're not fighting to land a
 hit on one thing without also killing another. Steps that need you to
-actually do something say **Action:** explicitly.
+actually do something say **Action:** explicitly. Steps marked
+**Cleanup:** leave a hostile alive on purpose (it has no reason to die on
+its own) - clear it before moving on so it doesn't wander into a later
+test.
 
 ---
 
@@ -35,15 +38,33 @@ command of a session.
 /c game.player.force.research_all_technologies(); game.speed=3; settings.global["rrec-distant-sample-interval-seconds"] = {value = 1}; settings.global["rrec-chain-near-hops"] = {value = 1}; settings.global["rrec-chain-max-hops"] = {value = 50}; settings.global["rrec-diagnostics-enabled"] = {value = true}; settings.global["rrec-battlefield-marker-enabled"] = {value = true}
 ```
 Turns on diagnostics and the battlefield marker (cyan outline around
-active zones). Diagnostics write to Factorio's own log file, not
-`replay.json`:
-* **Windows:** `%APPDATA%\Factorio\factorio-current.log`
-* **macOS:** `~/Library/Application Support/factorio/factorio-current.log`
-* **Linux:** `~/.factorio/factorio-current.log`
+active zones). See "After you're done" below for where the diagnostics
+data ends up and how to read it.
 
-Summarize it with `python3 tools/inspect_logs.py` after you're done.
+## 2. Ground items
 
-## 2. Long-chain rollup via belts (`item_distribution`)
+Tests: a dropped item stack being tracked (`ground_item_created`, ongoing
+`inventory_delta` with `owner_kind = ground_item`), and its removal
+(`ground_item_removed`). Placed first since it's the simplest event this
+checklist produces - a plain item sitting on the ground - and everything
+after it builds on more complex tracking (belts, inserter chains).
+
+```
+/c local b = game.player.surface.create_entity{name = "small-biter", position = {game.player.position.x + 1, game.player.position.y}, force = "enemy"}; b.die(); game.player.insert{name = "iron-plate", count = 10}
+```
+The scripted biter kill just opens a recording zone at your position -
+nothing to clean up from it.
+
+**Action:** Open your inventory, pick up the iron-plate stack (click it
+so it's on your cursor), then press **Z** once or twice to drop a couple
+of plates on the ground in front of you, then close your inventory.
+Confirm you actually see the plates land before continuing - this is the
+one step driven entirely by a manual UI action, not a script.
+```
+/c local items = game.player.surface.find_entities_filtered{type = "item-entity", position = game.player.position, radius = 10}; for _, i in ipairs(items) do i.destroy() end
+```
+
+## 3. Long-chain rollup via belts (`item_distribution`)
 
 Tests: a belt chain running far past a zone's own chunk gets rolled up
 into a compact "approximately this much, this direction" summary. Must
@@ -56,7 +77,7 @@ mode would defeat.
 ```
 Wait a couple of seconds.
 
-## 3. Distant chest via an inserter chain
+## 4. Distant chest via an inserter chain
 
 Tests: the same rollup mechanism, reached by following an inserter's
 `drop_target` to a chest instead of belt-to-belt. The inserter sits one
@@ -68,7 +89,7 @@ lands in a chunk that was never itself active.
 ```
 Wait a couple of seconds.
 
-## 4. Inserter-to-chest servicing under ambiguity
+## 5. Inserter-to-chest servicing under ambiguity
 
 Tests: `servicing_inserters`' search-radius heuristic (candidate chests
 within a configurable radius of a servicing inserter, narrowed down to an
@@ -76,14 +97,28 @@ exact match via `pickup_target`/`drop_target` identity) doesn't
 misattribute a nearby chest actually served by a *different* inserter.
 Two independent inserter+chest pairs, placed within each other's default
 3-tile search radius so each is a real candidate for the other's chest,
-not just an easy isolated case.
+not just an easy isolated case. Also includes a third, self-fueled
+`burner-inserter` actually carrying an item between two chests - none of
+this checklist's other scripted inserters ever have a real item source
+behind them to pick up from, so without this, `inventory_delta` with
+`owner_kind = inserter_hand` is never exercised anywhere.
 
 ```
-/c local surface = game.player.surface; local base = game.player.position; local ccx = math.floor(base.x / 32) * 32; local ccy = math.floor((base.y + 96) / 32) * 32; local ins_a = surface.create_entity{name = "inserter", position = {ccx + 10, ccy + 10}, direction = defines.direction.east, force = "player"}; local chest_a = surface.create_entity{name = "iron-chest", position = {ccx + 11, ccy + 10}, force = "player"}; chest_a.get_inventory(defines.inventory.chest).insert{name = "iron-plate", count = 40}; local ins_b = surface.create_entity{name = "inserter", position = {ccx + 10, ccy + 12}, direction = defines.direction.south, force = "player"}; local chest_b = surface.create_entity{name = "iron-chest", position = {ccx + 10, ccy + 13}, force = "player"}; chest_b.get_inventory(defines.inventory.chest).insert{name = "copper-plate", count = 40}; local b = surface.create_entity{name = "small-biter", position = {ccx + 10, ccy + 9}, force = "enemy"}; b.die()
+/c local surface = game.player.surface; local base = game.player.position; local ccx = math.floor(base.x / 32) * 32; local ccy = math.floor((base.y + 96) / 32) * 32; local ins_a = surface.create_entity{name = "inserter", position = {ccx + 10, ccy + 10}, direction = defines.direction.east, force = "player"}; local chest_a = surface.create_entity{name = "iron-chest", position = {ccx + 11, ccy + 10}, force = "player"}; chest_a.get_inventory(defines.inventory.chest).insert{name = "iron-plate", count = 40}; local ins_b = surface.create_entity{name = "inserter", position = {ccx + 10, ccy + 12}, direction = defines.direction.south, force = "player"}; local chest_b = surface.create_entity{name = "iron-chest", position = {ccx + 10, ccy + 13}, force = "player"}; chest_b.get_inventory(defines.inventory.chest).insert{name = "copper-plate", count = 40}; local src = surface.create_entity{name = "iron-chest", position = {ccx + 16, ccy + 10}, force = "player"}; src.get_inventory(defines.inventory.chest).insert{name = "iron-plate", count = 20}; local dst = surface.create_entity{name = "iron-chest", position = {ccx + 18, ccy + 10}, force = "player"}; local feeder = surface.create_entity{name = "burner-inserter", position = {ccx + 17, ccy + 10}, direction = defines.direction.east, force = "player"}; feeder.insert{name = "coal", count = 2}; local b = surface.create_entity{name = "small-biter", position = {ccx + 10, ccy + 9}, force = "enemy"}; b.die()
 ```
 Wait a couple of seconds.
 
-## 5. Distant logistics network (roboport)
+## 6. Robot cargo
+
+Tests: a bot's carried inventory being tracked. Placed before the
+roboport network test below since it's the simpler of the two - a single
+bot's inventory, no network roster involved.
+
+```
+/c local b = game.player.surface.create_entity{name = "small-biter", position = {game.player.position.x + 1, game.player.position.y}, force = "enemy"}; b.die(); local bot = game.player.surface.create_entity{name = "logistic-robot", position = game.player.position, force = "player"}; bot.get_inventory(defines.inventory.robot_cargo).insert{name = "iron-plate", count = 5}
+```
+
+## 7. Distant logistics network (roboport)
 
 Tests: a roboport network reachable from a zone's chunk but not
 physically standing in it - the one-time network roster plus ongoing
@@ -94,7 +129,17 @@ content sampling for providers/requesters.
 ```
 Wait a couple of seconds.
 
-## 6. Distant fluid chain
+## 8. Fluids
+
+Tests: a fluid-holding entity appearing and its contents being tracked.
+Placed before the distant fluid chain below since it's the simpler of
+the two - one tank, right next to you, no piped segment to traverse.
+
+```
+/c local b = game.player.surface.create_entity{name = "small-biter", position = {game.player.position.x + 1, game.player.position.y}, force = "enemy"}; b.die(); local tank = game.player.surface.create_entity{name = "storage-tank", position = {game.player.position.x - 3, game.player.position.y}, force = "player"}; tank.insert_fluid{name = "water", amount = 500}
+```
+
+## 9. Distant fluid chain
 
 Tests: fluid segments have no near/far split - `get_fluid_segment_fluid`
 reads a whole connected segment in one call however far it physically
@@ -105,7 +150,7 @@ runs, even while cropped.
 ```
 Wait a couple of seconds.
 
-## 7. Full recording mode
+## 10. Full recording mode
 
 Tests: every chunk gets recorded regardless of nearby combat.
 
@@ -113,7 +158,7 @@ Tests: every chunk gets recorded regardless of nearby combat.
 /c settings.global["rrec-full-recording-mode"] = {value = true}
 ```
 
-## 8. Turrets: damage, kills, and destruction
+## 11. Turrets: damage, kills, and destruction
 
 Tests: turret-dealt `damage_event`/`death_event`, a turret itself being
 destroyed, and fire creation/fade-out (`effect_created`/`effect_expired`)
@@ -128,7 +173,13 @@ target.
 Wait ~10 seconds for the kills/destruction, then ~10 more for the flame
 patch to fade.
 
-## 9. Vehicle destruction
+**Cleanup:** the behemoth-biter has no reason to die once it's destroyed
+the weak turret - clear it before it wanders into a later step:
+```
+/c for _, e in ipairs(game.player.surface.find_entities_filtered{force = "enemy"}) do e.destroy() end
+```
+
+## 12. Vehicle destruction
 
 Tests: a vehicle being damaged and destroyed, and (via a plain parked
 car alongside it) vehicle-type diversity for the checklist as a whole.
@@ -139,7 +190,13 @@ Fully scripted, no action required.
 ```
 Wait ~5 seconds.
 
-## 10. Kill classification: worm and spawner
+**Cleanup:** the biter survives after destroying the one-hit-point tank -
+clear it:
+```
+/c for _, e in ipairs(game.player.surface.find_entities_filtered{force = "enemy"}) do e.destroy() end
+```
+
+## 13. Kill classification: worm and spawner
 
 Tests: `hostile_kind` classification for worm turrets and spawners
 (biter/spitter classification is exercised elsewhere).
@@ -150,21 +207,29 @@ Tests: `hostile_kind` classification for worm turrets and spawners
 **Action:** Land one hit each - both are isolated, nothing else nearby to
 accidentally kill.
 
-## 11. Walls and gates: damage and destruction
+## 14. Walls and gates: damage and destruction
 
 Tests: `damage_event`/`death_event` for walls and gates specifically, not
 just turrets. Biters generally ignore a bare wall/gate with nothing
 behind it - each one here has a turret boxed in behind it (walls on the
 other three sides) so the only way to it is through the wall/gate being
-tested, giving the biter a real reason to attack it. Fully scripted, no
-action required.
+tested, giving the biter a real reason to attack it. The boxed-in turrets
+are deliberately left unarmed (they're bait, not meant to fight back), so
+both attacking biters are expected to survive. Fully scripted, no action
+required.
 
 ```
 /c local p = game.player.position; local surface = game.player.surface; local wx, wy = p.x - 60, p.y + 15; surface.create_entity{name="gun-turret", position={wx, wy}, force="player"}; surface.create_entity{name="stone-wall", position={wx - 1, wy}, force="player"}; surface.create_entity{name="stone-wall", position={wx + 1, wy}, force="player"}; surface.create_entity{name="stone-wall", position={wx, wy - 1}, force="player"}; local test_wall = surface.create_entity{name="stone-wall", position={wx, wy + 1}, force="player"}; test_wall.health = 1; surface.create_entity{name="small-biter", position={wx, wy + 3}, force="enemy"}; local gx, gy = p.x - 60, p.y - 15; surface.create_entity{name="gun-turret", position={gx, gy}, force="player"}; surface.create_entity{name="stone-wall", position={gx - 1, gy}, force="player"}; surface.create_entity{name="stone-wall", position={gx + 1, gy}, force="player"}; surface.create_entity{name="stone-wall", position={gx, gy - 1}, force="player"}; local test_gate = surface.create_entity{name="gate", position={gx, gy + 1}, force="player"}; test_gate.health = 1; surface.create_entity{name="small-biter", position={gx, gy + 3}, force="enemy"}
 ```
 Wait ~10 seconds.
 
-## 12. Spitter acid (isolated fight)
+**Cleanup:** both biters are still alive (and may still be chewing on the
+unarmed bait turrets) - clear them:
+```
+/c for _, e in ipairs(game.player.surface.find_entities_filtered{force = "enemy"}) do e.destroy() end
+```
+
+## 15. Spitter acid (isolated fight)
 
 Tests: acid damage and the resulting fire/acid patch, from a real fight.
 
@@ -175,13 +240,13 @@ Tests: acid damage and the resulting fire/acid patch, from a real fight.
 hits in on you before it dies. Wait ~10 seconds afterward for the acid
 patch to fade.
 
-## 13. Vehicle combat: shooting vs. running over
+## 16. Vehicle combat: shooting vs. running over
 
 Tests: vehicle fuel/ammo/trunk inventory tracking, and a vehicle
 damaging/killing an enemy via both its weapon and physically running one
 over - two separate targets, one on each side, so both are confirmed
 independently and you know which is which. (`car` diversity coverage
-already comes from step 9 - no need to place one here too.)
+already comes from step 12 - no need to place one here too.)
 
 ```
 /c local surface = game.player.surface; game.player.insert{name="tank", count=1}; game.player.insert{name="solid-fuel", count=20}; game.player.insert{name="firearm-magazine", count=40}; game.player.insert{name="cannon-shell", count=10}
@@ -194,7 +259,7 @@ already comes from step 9 - no need to place one here too.)
 (`shoot_target`), then drive over the biter on your **right/east**
 (`run_over_target`).
 
-## 14. Spidertron autopilot
+## 17. Spidertron autopilot
 
 Tests: an unmanned, autopilot-driven spidertron still counts as
 player-controlled. Fully scripted, no action required.
@@ -204,7 +269,7 @@ player-controlled. Fully scripted, no action required.
 ```
 Wait ~5 seconds.
 
-## 15. Player death, respawn, and corpse lifecycle
+## 18. Player death, respawn, and corpse lifecycle
 
 Tests: corpse provenance (`corpse_created`), its contents changing while
 it exists (`inventory_delta` with `owner_kind = corpse`, a partial change
@@ -222,36 +287,11 @@ Wait a couple of seconds.
 /c local c = game.player.surface.find_entities_filtered{type = "character-corpse"}[1]; if c then c.get_inventory(defines.inventory.character_corpse).clear() end
 ```
 
-## 16. Ground items
-
-Tests: a dropped item stack being tracked (`ground_item_created`, ongoing
-`inventory_delta` with `owner_kind = ground_item`), and its removal
-(`ground_item_removed`).
-
+**Cleanup:** the biter that killed you is still alive near your death
+spot (you've respawned elsewhere, so it's out of sight, not gone) -
+clear it:
 ```
-/c game.player.insert{name="iron-plate", count=10}
-```
-**Action:** Open your inventory, pick up the iron-plate stack (click it
-so it's on your cursor), then press **Z** once or twice to drop a couple
-of plates on the ground in front of you, then close your inventory.
-```
-/c local items = game.player.surface.find_entities_filtered{type = "item-entity", position = game.player.position, radius = 10}; for _, i in ipairs(items) do i.destroy() end
-```
-
-## 17. Fluids
-
-Tests: a fluid-holding entity appearing and its contents being tracked.
-
-```
-/c local tank = game.player.surface.create_entity{name = "storage-tank", position = {game.player.position.x - 3, game.player.position.y}, force = "player"}; tank.insert_fluid{name = "water", amount = 500}
-```
-
-## 18. Robot cargo
-
-Tests: a bot's carried inventory being tracked.
-
-```
-/c local bot = game.player.surface.create_entity{name = "logistic-robot", position = game.player.position, force = "player"}; bot.get_inventory(defines.inventory.robot_cargo).insert{name = "iron-plate", count = 5}
+/c for _, e in ipairs(game.player.surface.find_entities_filtered{force = "enemy"}) do e.destroy() end
 ```
 
 ## 19. Unit group formation
@@ -260,6 +300,12 @@ Tests: biters forming up into a group is recorded as `unit_group_created`.
 
 ```
 /c local g = game.player.surface.create_unit_group{position = {game.player.position.x + 10, game.player.position.y}, force = "enemy"}; local u1 = game.player.surface.create_entity{name = "small-biter", position = {game.player.position.x + 10, game.player.position.y}, force = "enemy"}; local u2 = game.player.surface.create_entity{name = "small-biter", position = {game.player.position.x + 11, game.player.position.y}, force = "enemy"}; g.add_member(u1); g.add_member(u2)
+```
+
+**Cleanup:** the group and its members just sit there gathering forever -
+clear them:
+```
+/c for _, e in ipairs(game.player.surface.find_entities_filtered{force = "enemy"}) do e.destroy() end
 ```
 
 ## 20. Full recording mode off + reload regression
@@ -292,7 +338,13 @@ python3 tools/inspect_replay.py
 Both default to the standard Factorio `script-output` location for your
 OS; pass `--path` if that's wrong for your setup.
 
-If you turned on diagnostics in step 1:
+If you turned on diagnostics in step 1, it was written to Factorio's own
+log file, not `replay.json`:
+* **Windows:** `%APPDATA%\Factorio\factorio-current.log`
+* **macOS:** `~/Library/Application Support/factorio/factorio-current.log`
+* **Linux:** `~/.factorio/factorio-current.log`
+
+Summarize it with:
 ```
 python3 tools/inspect_logs.py
 ```
@@ -305,7 +357,7 @@ Noted rather than silently skipped:
 
 * **Landmines** - not confirmed whether this mod tracks them at all
   (damage attribution, or even placement).
-* **Flame damage attribution** - step 8 confirms a fire patch is created
+* **Flame damage attribution** - step 11 confirms a fire patch is created
   and later fades (`effect_created`/`effect_expired`), but not whether
   standing in it generates its own `damage_event`s against whoever's in
   it, the way a direct hit does, or whether fire damage bypasses that
@@ -324,7 +376,7 @@ Noted rather than silently skipped:
 * **Electricity** - laser turrets, (non-burner) inserters, pumps, and
   roboports all need a real electric network to actually operate, which
   this checklist doesn't wire up anywhere. Gun and flamethrower turrets
-  are ammo/fluid-powered so they're unaffected, and steps 3/5 (the
+  are ammo/fluid-powered so they're unaffected, and steps 4/7 (the
   distant inserter and roboport tests) only depend on static
   position/target-resolution properties rather than anything requiring
   power to be flowing - but it's unconfirmed whether that holds for
