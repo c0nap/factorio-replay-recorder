@@ -66,6 +66,14 @@ end
 -- what froze the game for multiple seconds; draining a bounded number per
 -- tick instead spreads that same total cost across many ticks so no
 -- single tick pays for more than this many chunks' worth of engine calls.
+--
+-- Lowered from an earlier default of 20 to 8: even with max-buffered-
+-- events already down to 10 (see Config.max_buffered_events), real data
+-- showed a ~29-tick stutter (~0.5s) right at the moment full recording
+-- turned on - each chunk_snapshot event is a heavy payload (tiles +
+-- statics + logistics), so 20/tick was queuing writes faster than the
+-- write-side throttle alone could smooth out. Queuing fewer per tick
+-- attacks the actual source of the burst, not just how fast it drains.
 function Config.chunk_backfill_per_tick()
     return settings.global["rrec-chunk-backfill-per-tick"].value
 end
