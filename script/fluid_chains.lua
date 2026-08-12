@@ -46,21 +46,39 @@ local FluidChains = {}
 
 local FLUID_SEED_TYPES = {"pipe", "pipe-to-ground", "storage-tank", "pump", "fluid-turret"}
 
+-- entity.fluids_count can report more indices than the fluidbox wrapper
+-- actually accepts for some entity types (confirmed on real data:
+-- flamethrower-turret, "Passed index is out of range") - logged once per
+-- distinct entity NAME (not suppressed outright, and not per-instance
+-- either) the first time it's seen, since the real fix (below, in
+-- process_zone's seed loop) can only stop the loop early for a SEED's
+-- own index; a mismatch reached indirectly, by walking into a neighbour
+-- entity's other indices, doesn't have as clean a place to bail out of.
+local fluids_count_mismatch_seen = {}
+local function is_out_of_range(err)
+    return tostring(err):find("out of range", 1, true) ~= nil
+end
+
+local function note_fluids_count_mismatch(entity_name, context)
+    if fluids_count_mismatch_seen[entity_name] then return end
+    fluids_count_mismatch_seen[entity_name] = true
+    log("[replay-recorder] FluidChains: " .. entity_name .. ".fluids_count reports more indices than its "
+        .. "fluidbox actually accepts (" .. context .. " index out of range) - every occurrence for this "
+        .. "entity name past this point is the same known mismatch, not logged again")
+end
+
 -- Returns the LuaEntity owners of every box connected to (entity, index),
 -- deduplicated by unit_number - see the file-level comment for why this
 -- can't narrow down to the exact connected index the way the previous
 -- (confirmed-2.1-shape) version could.
 local function connected_owners(entity, index)
     local ok, boxes = pcall(function() return entity.fluidbox.get_connections(index) end)
-    -- Confirmed benign on real data: entity.fluids_count can report more
-    -- indices than the fluidbox wrapper actually accepts for entities
-    -- like flamethrower-turret (seen as "Passed index is out of range").
-    -- fluid_delta still came through correctly overall in that same
-    -- session - each index is its own independent loop iteration in
-    -- process_zone below, so one out-of-range index doesn't affect any
-    -- other, valid one. Not worth logging every time it happens.
-    if not ok and not tostring(boxes):find("out of range", 1, true) then
-        log("[replay-recorder] FluidChains: " .. entity.name .. ".fluidbox.get_connections failed: " .. tostring(boxes))
+    if not ok then
+        if is_out_of_range(boxes) then
+            note_fluids_count_mismatch(entity.name, "get_connections")
+        else
+            log("[replay-recorder] FluidChains: " .. entity.name .. ".fluidbox.get_connections failed: " .. tostring(boxes))
+        end
     end
     if not ok or not boxes then return {} end
 
@@ -199,7 +217,25 @@ local function process_zone(surface, area, visited_boxes, reported)
                         local rep = component[1]
                         if rep then
                             local seg_id_ok, seg_id = pcall(function() return rep.entity.fluidbox.get_fluid_segment_id(rep.index) end)
-                            if not seg_id_ok and not tostring(seg_id):find("out of range", 1, true) then
+                            if not seg_id_ok then
+                                if is_out_of_range(seg_id) and rep.entity == seed and rep.index == index then
+                                    -- rep is guaranteed to be exactly (seed,
+                                    -- index) here - see discover_component:
+                                    -- the walk stack always starts with the
+                                    -- seed's own node, and this branch only
+                                    -- runs the first time (seed, index) is
+                                    -- visited this tick. Indices are
+                                    -- contiguous from 1, so once one is out
+                                    -- of range, every later index this seed's
+                                    -- own fluids_count would have tried is
+                                    -- out of range too - stop here instead of
+                                    -- burning count-index more failed calls
+                                    -- on the same entity. This is the actual
+                                    -- fix for the mismatch, not just a
+                                    -- quieter log for it.
+                                    note_fluids_count_mismatch(seed.name, "get_fluid_segment_id")
+                                    break
+                                end
                                 log("[replay-recorder] FluidChains: " .. rep.entity.name .. ".fluidbox.get_fluid_segment_id failed: " .. tostring(seg_id))
                             end
                             if seg_id_ok and seg_id ~= nil then
