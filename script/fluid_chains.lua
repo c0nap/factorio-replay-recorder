@@ -52,7 +52,14 @@ local FLUID_SEED_TYPES = {"pipe", "pipe-to-ground", "storage-tank", "pump", "flu
 -- (confirmed-2.1-shape) version could.
 local function connected_owners(entity, index)
     local ok, boxes = pcall(function() return entity.fluidbox.get_connections(index) end)
-    if not ok then
+    -- Confirmed benign on real data: entity.fluids_count can report more
+    -- indices than the fluidbox wrapper actually accepts for entities
+    -- like flamethrower-turret (seen as "Passed index is out of range").
+    -- fluid_delta still came through correctly overall in that same
+    -- session - each index is its own independent loop iteration in
+    -- process_zone below, so one out-of-range index doesn't affect any
+    -- other, valid one. Not worth logging every time it happens.
+    if not ok and not tostring(boxes):find("out of range", 1, true) then
         log("[replay-recorder] FluidChains: " .. entity.name .. ".fluidbox.get_connections failed: " .. tostring(boxes))
     end
     if not ok or not boxes then return {} end
@@ -192,7 +199,7 @@ local function process_zone(surface, area, visited_boxes, reported)
                         local rep = component[1]
                         if rep then
                             local seg_id_ok, seg_id = pcall(function() return rep.entity.fluidbox.get_fluid_segment_id(rep.index) end)
-                            if not seg_id_ok then
+                            if not seg_id_ok and not tostring(seg_id):find("out of range", 1, true) then
                                 log("[replay-recorder] FluidChains: " .. rep.entity.name .. ".fluidbox.get_fluid_segment_id failed: " .. tostring(seg_id))
                             end
                             if seg_id_ok and seg_id ~= nil then
