@@ -69,6 +69,26 @@ function Tracker.on_entity_died(event)
     local entity = event.entity
     if not entity.valid then return end
 
+    -- TEMPORARY (PR #13): effect_expired stayed at 0 events in the same
+    -- session where effect_created also never fired - one theory tried
+    -- this round is that on_trigger_created_entity simply never fires by
+    -- default (see data-updates.lua), but that doesn't explain the
+    -- EXPIRY side: on_entity_died is a completely different, unrelated
+    -- event, and whether it fires at all for a time-to-live-expired fire/
+    -- acid patch (as opposed to only for entities destroyed by damage)
+    -- has never been confirmed either way. Rather than build a much
+    -- larger polling-based fallback on that unconfirmed premise, log
+    -- every distinct (name, type) on_entity_died ever sees, once each -
+    -- if "fire"-typed entities never show up here at all, that confirms
+    -- the bigger rewrite is actually needed; if they show up under a
+    -- different type string, this is a one-line fix instead.
+    storage.entity_died_probe_seen = storage.entity_died_probe_seen or {}
+    local died_probe_key = entity.name .. "/" .. entity.type
+    if not storage.entity_died_probe_seen[died_probe_key] then
+        storage.entity_died_probe_seen[died_probe_key] = true
+        log("[replay-recorder-probe] on_entity_died: name=" .. entity.name .. " type=" .. entity.type)
+    end
+
     -- Fire/acid patches expire on their own (their "health" is really a
     -- countdown timer). That's the "acid entity loses potency and fades"
     -- event from the design doc, but it isn't new combat, so it gets a
@@ -157,6 +177,22 @@ function Tracker.on_entity_died(event)
     })
 end
 
+-- A character-corpse's unit_number can't be relied on as an identity key -
+-- confirmed by a real crash in an earlier round ("attempt to concatenate
+-- field 'unit_number' (a nil value)" on an actual corpse in a live game),
+-- and every corpse-owner_kind/corpse_created/corpse_expired check stayed
+-- at 0 events in the session right after that crash was patched by simply
+-- requiring corpse.unit_number to be truthy before using it - consistent
+-- with unit_number never actually being populated on this entity type, not
+-- just occasionally nil. character_corpse_player_index and
+-- character_corpse_tick_of_death are used instead everywhere a corpse
+-- needs a stable identity: a single player can only die once per game
+-- tick, so the pair uniquely and stably identifies one corpse for its
+-- whole lifetime regardless of whether unit_number is ever populated.
+local function corpse_owner_key(corpse)
+    return "corpse_" .. corpse.character_corpse_player_index .. "_" .. corpse.character_corpse_tick_of_death
+end
+
 -- Player corpses do NOT go through on_entity_died/on_post_entity_died at
 -- all - confirmed against the real API/developer statements: the generic
 -- entity death system is entirely unaware of the character death system,
@@ -208,10 +244,10 @@ function Tracker.on_player_died(event)
         .. (#probe > 0 and (" [" .. table.concat(probe, "; ") .. "]") or ""))
 
     for _, corpse in pairs(corpses) do
-        if corpse.valid and corpse.unit_number and corpse.character_corpse_player_index == event.player_index
+        if corpse.valid and corpse.character_corpse_player_index == event.player_index
             and corpse.character_corpse_tick_of_death == game.tick then
             Exporter.log_event(game.tick, "corpse_created", {
-                owner = "corpse_" .. corpse.unit_number,
+                owner = corpse_owner_key(corpse),
                 position = corpse.position,
                 player_index = event.player_index,
                 player_name = player.name,
@@ -231,10 +267,11 @@ end
 -- ..id] has no event that ever tells us the corpse is gone for good.
 function Tracker.on_character_corpse_expired(event)
     local corpse = event.corpse
-    if not corpse or not corpse.valid or not corpse.unit_number then return end
+    if not corpse or not corpse.valid then return end
 
-    storage.inventory_cache["corpse_" .. corpse.unit_number] = nil
-    Exporter.log_event(game.tick, "corpse_expired", {owner = "corpse_" .. corpse.unit_number})
+    local owner_key = corpse_owner_key(corpse)
+    storage.inventory_cache[owner_key] = nil
+    Exporter.log_event(game.tick, "corpse_expired", {owner = owner_key})
 end
 
 function Tracker.on_player_respawned(event)
@@ -416,19 +453,21 @@ local function scan_physical_items(surface, area)
     local entities = surface.find_entities_filtered{area = area, type = PHYSICAL_ITEM_TYPES}
 
     for _, ent in ipairs(entities) do
-        if ent.valid and ent.unit_number then
+        if ent.valid and ent.type == "character-corpse" then
+            -- Keyed separately from the unit_number-gated branch below -
+            -- see corpse_owner_key's comment for why a corpse can't be
+            -- gated on ent.unit_number the way everything else here is.
+            -- Corpses aren't in the static chunk dump (they're dynamic -
+            -- they appear and eventually decay) and inventory_delta
+            -- carries no position field otherwise, so this is the only
+            -- place a corpse's location is ever reported. Not redundant
+            -- with death_event's `loot`: loot is what was dropped at the
+            -- moment of death, this is what happens to that pile
+            -- afterward (looting, partial decay).
+            TrackerEvents.log_inventory_delta(corpse_owner_key(ent), "corpse", TrackerEvents.corpse_contents(ent), {position = ent.position})
+        elseif ent.valid and ent.unit_number then
             if ent.type == "container" or ent.type == "logistic-container" then
                 TrackerEvents.log_inventory_delta("container_" .. ent.unit_number, "container", TrackerEvents.container_contents(ent))
-            elseif ent.type == "character-corpse" then
-                -- Corpses aren't in the static chunk dump (they're
-                -- dynamic - they appear and eventually decay) and
-                -- inventory_delta carries no position field otherwise,
-                -- so this is the only place a corpse's location is ever
-                -- reported. Not redundant with death_event's `loot`:
-                -- loot is what was dropped at the moment of death, this
-                -- is what happens to that pile afterward (looting,
-                -- partial decay).
-                TrackerEvents.log_inventory_delta("corpse_" .. ent.unit_number, "corpse", TrackerEvents.corpse_contents(ent), {position = ent.position})
             elseif ent.type == "inserter" then
                 TrackerEvents.log_inventory_delta("inserter_" .. ent.unit_number, "inserter_hand", TrackerEvents.held_stack_contents(ent))
             elseif ent.type == "item-entity" then
