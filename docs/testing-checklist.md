@@ -141,9 +141,11 @@ the two - one tank, right next to you, no piped segment to traverse.
 
 ## 9. Distant fluid chain
 
-Tests: fluid segments have no near/far split - `get_fluid_segment_fluid`
+Tests: fluid segments have no near/far split - `get_fluid_segment_contents`
 reads a whole connected segment in one call however far it physically
-runs, even while cropped.
+runs, even while cropped. (Note: as of PR #13 this is an attempted 2.0
+API shape, not yet confirmed against real data - see fluid_chains.lua's
+file header.)
 
 ```
 /c local surface = game.player.surface; local base = game.player.position; local pipe; for i = 0, 35 do pipe = surface.create_entity{name = "pipe", position = {base.x + i, base.y - 60}, force = "player"} or pipe end; local tank = surface.create_entity{name = "storage-tank", position = {base.x - 2, base.y - 60}, force = "player"}; tank.insert_fluid{name = "water", amount = 300}; local b = surface.create_entity{name = "small-biter", position = {base.x, base.y - 61}, force = "enemy"}; b.die()
