@@ -299,6 +299,26 @@ end
 -- it's physically in an active zone, just without this provenance record.
 function TrackerEvents.on_player_dropped_item(event)
     local entity = event.entity
+
+    -- TEMPORARY (PR #13): ground_item_created/ground_item_removed and
+    -- inventory_delta's ground_item owner_kind all stayed at 0 events in
+    -- a real session, with zero evidence of why - unlike the corpse and
+    -- fluid cases, this event was never probed at all, and the step
+    -- itself is the one manual UI action in the whole checklist (open
+    -- inventory, click the stack, press Z), so this could be either a
+    -- code issue (event.entity nil/invalid/no unit_number, same category
+    -- of bug the corpse fix just found) or simply the drop never
+    -- happening in-game. Log unconditionally - this event is rare enough
+    -- (one manual drop per checklist run) that spam isn't a concern.
+    local probe_msg = "[replay-recorder-probe] on_player_dropped_item: event.entity=" .. tostring(entity)
+    if entity then
+        probe_msg = probe_msg .. " valid=" .. tostring(entity.valid)
+        if entity.valid then
+            probe_msg = probe_msg .. " unit_number=" .. tostring(entity.unit_number)
+        end
+    end
+    log(probe_msg)
+
     if not entity or not entity.valid or not entity.unit_number then return end
 
     TrackerEvents.ensure_ground_item_registered(entity)
