@@ -6,33 +6,39 @@
 -- pipe network outward from there the same way item_chains follows belts
 -- and inserters.
 --
--- Unlike belts and inserters, this turns out to be simpler than it
--- sounds: Factorio 2.0 already groups directly-connected pipes into
--- "fluid segments" internally, and LuaEntity::get_fluid_segment_fluid
--- reads an entire connected segment's contents in ONE call - there's no
--- need to walk pipe-by-pipe to add up contents the way belt lines do.
--- Because reading a segment is O(1) regardless of how physically long it
--- is, there's also no near/far precision split the way item_chains has -
--- a segment's total is the precise answer, not an estimate, no matter
--- how far it reaches. Everything here runs on the same slow interval as
--- Tier 2 logistics and item chains (Config.distant_sample_interval_ticks).
+-- UNVERIFIED (PR #13): every method this file previously called directly
+-- on LuaEntity (get_fluid_box_neighbours/has_fluid_segment/
+-- get_fluid_segment_fluid) errored with "LuaEntity doesn't contain key
+-- ..." on a real 2.0.76 run, despite matching real API docs fetched
+-- earlier in this project - a genuine, unresolved contradiction. This
+-- rewrite switches to a different shape - fluid methods living on
+-- `entity.fluidbox` (a LuaFluidBox wrapper) instead of on LuaEntity
+-- directly - on the theory that the docs fetched (and the ones this is
+-- now based on) describe a different Factorio version than 2.0.76 is
+-- running. That theory is NOT independently confirmed - it's the
+-- explicit direction to try next, to be reverted if it turns out no
+-- better than what was here before. Every call below is still
+-- pcall-guarded and still logs on failure, same as before, so a wrong
+-- guess here fails exactly as visibly as the last one did.
 --
--- The one real wrinkle: there's no confirmed stable segment identifier
--- to key an "already reported this segment" set by. A single segment is
--- usually made of many individual pipe entities (a straight run of 50
--- pipes is one segment), and naively reading+reporting from every member
--- would report the same physical amount 50 times. So this discovers a
--- segment's full membership first (walking get_fluid_box_neighbours) and
--- only reads/reports it once, from a single representative member, using
--- that discovery walk itself as the de-dup mechanism instead of an ID.
+-- Assumed shape, per that direction:
+--   entity.fluidbox[index]                    -> {name, amount, temperature} or nil
+--   entity.fluidbox.get_connections(index)     -> array of LuaFluidBox (connected boxes, not entities)
+--   connected_box.owner                        -> the LuaEntity that box belongs to
+--   entity.fluidbox.get_fluid_segment_id(index)      -> a value, or nil if not part of a segment
+--   entity.fluidbox.get_fluid_segment_contents(index) -> {[fluid_name] = amount, ...} (a dict,
+--       possibly more than one fluid name - unlike the single-Fluid-struct shape tried before)
 --
--- Multi-fluidbox entities (a pump has two, one per side) are correctly
--- segmented: get_fluid_box_neighbours(index) returns FluidBoxNeighbourRecord
--- entries ({entity, index}) naming the SPECIFIC fluidbox index on the
--- neighbouring entity that's connected - the discovery walk below only
--- ever follows that exact index, never every fluidbox the neighbour
--- happens to have, so a pump's two independent sides can never be merged
--- into one reported segment.
+-- One real gap in the above: nothing above says how to recover the
+-- INDEX of a connected box within its owner (only `.owner`, the entity).
+-- Rather than guess a reverse lookup that was never described, a
+-- discovered neighbour entity has ALL of its own indices (1..fluids_count)
+-- enqueued for the walk, not just the one actually connected. This is a
+-- real precision loss versus the previous (confirmed-2.1-shape) code,
+-- which tracked the exact connected index and so could never merge a
+-- multi-fluidbox entity's independent sides (a pump's two ends) into one
+-- reported segment - this version can, for exactly that kind of entity,
+-- until a real reverse-index lookup is confirmed.
 local TrackerEvents = require("script.tracker_events")
 local Config = require("script.config")
 
@@ -40,20 +46,52 @@ local FluidChains = {}
 
 local FLUID_SEED_TYPES = {"pipe", "pipe-to-ground", "storage-tank", "pump", "fluid-turret"}
 
--- FluidBoxNeighbourRecord's confirmed shape: {entity = LuaEntity, index =
--- FluidStorageIndex} - the specific neighbouring fluidbox this one is
--- connected to, not just "some fluidbox on that entity".
-local function fluidbox_neighbours(entity, index)
-    local ok, neighbours = pcall(function() return entity.get_fluid_box_neighbours(index) end)
+-- entity.fluids_count can report more indices than the fluidbox wrapper
+-- actually accepts for some entity types (confirmed on real data:
+-- flamethrower-turret, "Passed index is out of range") - logged once per
+-- distinct entity NAME (not suppressed outright, and not per-instance
+-- either) the first time it's seen, since the real fix (below, in
+-- process_zone's seed loop) can only stop the loop early for a SEED's
+-- own index; a mismatch reached indirectly, by walking into a neighbour
+-- entity's other indices, doesn't have as clean a place to bail out of.
+local fluids_count_mismatch_seen = {}
+local function is_out_of_range(err)
+    return tostring(err):find("out of range", 1, true) ~= nil
+end
+
+local function note_fluids_count_mismatch(entity_name, context)
+    if fluids_count_mismatch_seen[entity_name] then return end
+    fluids_count_mismatch_seen[entity_name] = true
+    log("[replay-recorder] FluidChains: " .. entity_name .. ".fluids_count reports more indices than its "
+        .. "fluidbox actually accepts (" .. context .. " index out of range) - every occurrence for this "
+        .. "entity name past this point is the same known mismatch, not logged again")
+end
+
+-- Returns the LuaEntity owners of every box connected to (entity, index),
+-- deduplicated by unit_number - see the file-level comment for why this
+-- can't narrow down to the exact connected index the way the previous
+-- (confirmed-2.1-shape) version could.
+local function connected_owners(entity, index)
+    local ok, boxes = pcall(function() return entity.fluidbox.get_connections(index) end)
     if not ok then
-        log("[replay-recorder] FluidChains: " .. entity.name .. ".get_fluid_box_neighbours failed: " .. tostring(neighbours))
+        if is_out_of_range(boxes) then
+            note_fluids_count_mismatch(entity.name, "get_connections")
+        else
+            log("[replay-recorder] FluidChains: " .. entity.name .. ".fluidbox.get_connections failed: " .. tostring(boxes))
+        end
     end
-    if not ok or not neighbours then return {} end
+    if not ok or not boxes then return {} end
 
     local out = {}
-    for _, record in ipairs(neighbours) do
-        if record.entity and record.entity.valid and record.index then
-            table.insert(out, {entity = record.entity, index = record.index})
+    local seen = {}
+    for _, box in ipairs(boxes) do
+        local owner_ok, owner = pcall(function() return box.owner end)
+        if not owner_ok then
+            log("[replay-recorder] FluidChains: connected box.owner failed: " .. tostring(owner))
+        end
+        if owner_ok and owner and owner.valid and owner.unit_number and not seen[owner.unit_number] then
+            seen[owner.unit_number] = true
+            table.insert(out, owner)
         end
     end
     return out
@@ -68,11 +106,11 @@ local function rounded(amount)
 end
 
 -- Discovers every {entity, index} reachable from (start_entity,
--- start_index) via get_fluid_box_neighbours, marking each as visited in
--- the shared `visited_boxes` set (shared across the whole tick, so a
--- second zone whose walk reaches the same pipe run doesn't re-read it
--- either). Returns the component as an array; the caller reads the
--- segment's fluid from just the first member.
+-- start_index) via entity.fluidbox.get_connections, marking each as
+-- visited in the shared `visited_boxes` set (shared across the whole
+-- tick, so a second zone whose walk reaches the same pipe run doesn't
+-- re-read it either). Returns the component as an array; the caller
+-- reads the segment's fluid from just the first member.
 local function discover_component(start_entity, start_index, visited_boxes)
     local component = {}
     local stack = {{entity = start_entity, index = start_index}}
@@ -84,13 +122,15 @@ local function discover_component(start_entity, start_index, visited_boxes)
             visited_boxes[key] = true
             table.insert(component, current)
 
-            -- Only the SPECIFIC fluidbox index each neighbour record
-            -- names, not every fluidbox the neighbouring entity happens
-            -- to have - this is what keeps a multi-fluidbox entity's
-            -- independent sides from ever being merged into one segment.
-            for _, neighbour in ipairs(fluidbox_neighbours(current.entity, current.index)) do
-                if neighbour.entity.unit_number then
-                    table.insert(stack, neighbour)
+            for _, neighbour_entity in ipairs(connected_owners(current.entity, current.index)) do
+                local count_ok, count = pcall(function() return neighbour_entity.fluids_count end)
+                if count_ok and count then
+                    for n_index = 1, count do
+                        local n_key = neighbour_entity.unit_number .. "_" .. n_index
+                        if not visited_boxes[n_key] then
+                            table.insert(stack, {entity = neighbour_entity, index = n_index})
+                        end
+                    end
                 end
             end
         end
@@ -99,20 +139,60 @@ local function discover_component(start_entity, start_index, visited_boxes)
     return component
 end
 
+-- TEMPORARY (PR #13): a live console probe already confirmed entity.fluidbox
+-- exists (userdata) while every LuaEntity-level segment method
+-- (get_fluid_box_neighbours/has_fluid_segment/get_fluid_segment_fluid/
+-- get_fluid_segment_id/get_fluid_segment_contents) errors with "doesn't
+-- contain key" - but that probe used a freshly created, EMPTY tank, so
+-- entity.fluidbox[1] came back ambiguous (nil-because-empty and
+-- nil-because-not-indexable-that-way both hit the same branch). This
+-- probes the real thing instead: the first seed actually encountered
+-- during real play with fluid already in it (every checklist fluid step
+-- inserts fluid before this ever runs), pcall-guarding each candidate
+-- separately so nil and ERROR are never conflated. Also now the
+-- authoritative check on whether THIS rewrite's assumed shape is right -
+-- if get_connections/get_fluid_segment_id/get_fluid_segment_contents come
+-- back ERROR here too, the wrapper theory is wrong, not just the exact
+-- method names. Logs once per session. Remove once the real shape is
+-- confirmed either way.
+local function probe_fluidbox_shape(entity)
+    if storage.fluid_api_probe_done then return end
+    storage.fluid_api_probe_done = true
+
+    local function p(name, fn)
+        local ok, v = pcall(fn)
+        if not ok then return name .. "=ERROR(" .. tostring(v) .. ")" end
+        if v == nil then return name .. "=nil" end
+        return name .. "=" .. tostring(v) .. "(" .. type(v) .. ")"
+    end
+
+    local parts = {p("entity.fluidbox", function() return entity.fluidbox end)}
+
+    local ok_box, box = pcall(function() return entity.fluidbox and entity.fluidbox[1] end)
+    if ok_box and box ~= nil then
+        table.insert(parts, p("fluidbox[1]", function() return box end))
+        table.insert(parts, p("fluidbox[1].owner", function() return box.owner end))
+        table.insert(parts, p("fluidbox[1].amount", function() return box.amount end))
+        table.insert(parts, p("fluidbox[1].name", function() return box.name end))
+        table.insert(parts, p("fluidbox[1].get_connections", function() return box.get_connections end))
+        table.insert(parts, p("fluidbox[1].get_fluid_segment_contents", function() return box.get_fluid_segment_contents end))
+        table.insert(parts, p("fluidbox[1].get_fluid_segment_id", function() return box.get_fluid_segment_id end))
+    else
+        table.insert(parts, ok_box and "fluidbox[1]=nil" or ("fluidbox[1]=ERROR(" .. tostring(box) .. ")"))
+    end
+
+    table.insert(parts, p("fluidbox.get_connections(1)", function() return entity.fluidbox.get_connections(1) end))
+    table.insert(parts, p("fluidbox.get_fluid_segment_contents(1)", function() return entity.fluidbox.get_fluid_segment_contents(1) end))
+    table.insert(parts, p("fluidbox.get_fluid_segment_id(1)", function() return entity.fluidbox.get_fluid_segment_id(1) end))
+
+    log("[replay-recorder-probe] fluidbox shape on " .. entity.name .. ": " .. table.concat(parts, " | "))
+end
+
 -- One walk per currently active zone, seeded from pipes/tanks/pumps/
 -- flamethrower turrets physically in it. `visited_boxes`/`reported` are
 -- shared across every zone processed in this call (passed in from
 -- FluidChains.tick, not per-zone), so two zones reaching into the same
 -- pipe network don't double-report it.
--- Every pcall in this function guards against an exotic/mid-tick-invalid
--- entity throwing an error that would otherwise abort fluid tracking for
--- the whole tick - see the file-level comment. That safety net has a cost:
--- a genuine bug here (a wrong assumption about the API, not an exotic
--- entity) fails exactly as silently as the exotic-entity case it's meant
--- to tolerate - zero fluid_delta events, no visible error anywhere. log()
--- on the failure path costs nothing when nothing's failing, and turns a
--- silent "why didn't this work" into a concrete error message in
--- factorio-current.log the next time it reproduces.
 local function process_zone(surface, area, visited_boxes, reported)
     local ok, seeds = pcall(function()
         return surface.find_entities_filtered{area = area, type = FLUID_SEED_TYPES}
@@ -128,31 +208,52 @@ local function process_zone(surface, area, visited_boxes, reported)
             if not count_ok then
                 log("[replay-recorder] FluidChains: " .. seed.name .. ".fluids_count failed: " .. tostring(count))
             end
-            if count_ok and count then
+            if count_ok and count and count > 0 then
+                probe_fluidbox_shape(seed)
                 for index = 1, count do
                     local key = seed.unit_number .. "_" .. index
                     if not visited_boxes[key] then
                         local component = discover_component(seed, index, visited_boxes)
                         local rep = component[1]
                         if rep then
-                            local has_ok, has_segment = pcall(function() return rep.entity.has_fluid_segment(rep.index) end)
-                            if not has_ok then
-                                log("[replay-recorder] FluidChains: " .. rep.entity.name .. ".has_fluid_segment failed: " .. tostring(has_segment))
-                            end
-                            if has_ok and has_segment then
-                                local fluid_ok, fluid = pcall(function() return rep.entity.get_fluid_segment_fluid(rep.index) end)
-                                if not fluid_ok then
-                                    log("[replay-recorder] FluidChains: " .. rep.entity.name .. ".get_fluid_segment_fluid failed: " .. tostring(fluid))
+                            local seg_id_ok, seg_id = pcall(function() return rep.entity.fluidbox.get_fluid_segment_id(rep.index) end)
+                            if not seg_id_ok then
+                                if is_out_of_range(seg_id) and rep.entity == seed and rep.index == index then
+                                    -- rep is guaranteed to be exactly (seed,
+                                    -- index) here - see discover_component:
+                                    -- the walk stack always starts with the
+                                    -- seed's own node, and this branch only
+                                    -- runs the first time (seed, index) is
+                                    -- visited this tick. Indices are
+                                    -- contiguous from 1, so once one is out
+                                    -- of range, every later index this seed's
+                                    -- own fluids_count would have tried is
+                                    -- out of range too - stop here instead of
+                                    -- burning count-index more failed calls
+                                    -- on the same entity. This is the actual
+                                    -- fix for the mismatch, not just a
+                                    -- quieter log for it.
+                                    note_fluids_count_mismatch(seed.name, "get_fluid_segment_id")
+                                    break
                                 end
-                                if fluid_ok and fluid then
-                                    local report_key = rep.entity.unit_number .. "_" .. fluid.name
-                                    if not reported[report_key] then
-                                        reported[report_key] = true
-                                        TrackerEvents.log_fluid_delta(
-                                            "fluid_" .. rep.entity.unit_number .. "_" .. fluid.name,
-                                            {[fluid.name] = rounded(fluid.amount)},
-                                            {position = rep.entity.position}
-                                        )
+                                log("[replay-recorder] FluidChains: " .. rep.entity.name .. ".fluidbox.get_fluid_segment_id failed: " .. tostring(seg_id))
+                            end
+                            if seg_id_ok and seg_id ~= nil then
+                                local contents_ok, contents = pcall(function() return rep.entity.fluidbox.get_fluid_segment_contents(rep.index) end)
+                                if not contents_ok then
+                                    log("[replay-recorder] FluidChains: " .. rep.entity.name .. ".fluidbox.get_fluid_segment_contents failed: " .. tostring(contents))
+                                end
+                                if contents_ok and contents then
+                                    for fluid_name, amount in pairs(contents) do
+                                        local report_key = rep.entity.unit_number .. "_" .. fluid_name
+                                        if not reported[report_key] then
+                                            reported[report_key] = true
+                                            TrackerEvents.log_fluid_delta(
+                                                "fluid_" .. rep.entity.unit_number .. "_" .. fluid_name,
+                                                {[fluid_name] = rounded(amount)},
+                                                {position = rep.entity.position}
+                                            )
+                                        end
                                     end
                                 end
                             end

@@ -16,12 +16,30 @@ function Exporter.init()
     helpers.write_file("replay.json", "", false)
 end
 
+-- TEMPORARY (PR #13): corpse_created/ground_item_created stayed at 0
+-- events in real sessions despite upstream evidence they were actually
+-- called (a matching probe, in corpse_created's case). One theory
+-- offered is that something in this file - the buffer, or
+-- helpers.table_to_json - is silently dropping them. This is directly
+-- checkable: log_event already unconditionally appends to
+-- storage.replay_buffer, and flush() already unconditionally writes
+-- whatever's in it, so there's no code path that filters by event_type
+-- anywhere in this file - but tracing it explicitly, rather than relying
+-- on reading the code, is what actually settles it instead of asserting
+-- it. Remove once corpse_created/ground_item_created are confirmed
+-- working end-to-end.
+local TRACED_EVENT_TYPES = {corpse_created = true, corpse_expired = true, ground_item_created = true}
+
 function Exporter.log_event(tick, event_type, payload)
     table.insert(storage.replay_buffer, {
         tick = tick,
         type = event_type,
         data = payload
     })
+    if TRACED_EVENT_TYPES[event_type] then
+        log("[replay-recorder-probe] Exporter.log_event: buffered " .. event_type .. " at tick " .. tostring(tick)
+            .. " (buffer now " .. #storage.replay_buffer .. " entries)")
+    end
 end
 
 -- Real diagnostics data confirmed this is where a full-recording backfill
@@ -53,6 +71,10 @@ function Exporter.flush()
     local lines = {}
     for i = 1, n do
         lines[i] = helpers.table_to_json(buffer[i])
+        if TRACED_EVENT_TYPES[buffer[i].type] then
+            log("[replay-recorder-probe] Exporter.flush: writing " .. buffer[i].type .. " from tick " .. tostring(buffer[i].tick)
+                .. " - serialized length " .. #lines[i])
+        end
     end
 
     helpers.write_file("replay.json", table.concat(lines, "\n") .. "\n", true) -- true = append

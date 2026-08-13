@@ -78,7 +78,7 @@ data:extend({
         type = "int-setting",
         name = "rrec-chunk-backfill-per-tick",
         setting_type = "runtime-global",
-        default_value = 20,
+        default_value = 8,
         minimum_value = 1,
         maximum_value = 500,
         order = "i"

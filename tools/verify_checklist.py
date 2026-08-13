@@ -71,7 +71,7 @@ def check_logistics_nonempty(events):
     for e in events:
         if e.get("type") == "chunk_snapshot" and e.get("data", {}).get("logistics"):
             return True, f"e.g. {len(e['data']['logistics'])} network(s) in one snapshot"
-    return False, "every chunk_snapshot had an empty logistics list - the roboport in step 4 probably isn't reachable from the zone chunk"
+    return False, "every chunk_snapshot had an empty logistics list - the roboport in step 6 probably isn't reachable from the zone chunk"
 
 
 def check_kill_classification(events):
@@ -117,7 +117,7 @@ def check_turret_destroyed(events):
     if not victims:
         return False, (
             f"no death_event with a player-placed turret ({', '.join(sorted(PLAYER_TURRET_NAMES))}) as "
-            "victim - the weak turret in step 8 should get destroyed by the behemoth"
+            "victim - the weak turret in step 12 should get destroyed by the behemoth"
         )
     return True, f"saw {', '.join(sorted(victims))}"
 
@@ -139,7 +139,7 @@ def check_vehicle_diversity(events):
 
 
 def check_inserter_chest_disambiguation(events):
-    """Step 4: two independent inserter+chest pairs, placed within each
+    """Step 5: two independent inserter+chest pairs, placed within each
     other's search radius so each chest is a real candidate for the
     *other* inserter too. iron-plate should land on one container owner,
     copper-plate on a different one - never both on the same owner key,
@@ -177,35 +177,40 @@ def check_owner_kinds(events):
 
 
 # (check name, checklist step to re-run on failure, check function)
+# Step numbers below match docs/testing-checklist.md's current order (a
+# dedicated zone-lifecycle step 2, full recording mode turned on as early
+# as steps 3-7's near/far tests allow at step 8, ground items/robot cargo/
+# basic fluids moved after it since they no longer need their own
+# zone-opening kill - see that file's step 3/8 notes for why).
 CHECKS = [
     ("chunk_snapshot recorded", "1-2", present("chunk_snapshot")),
-    ("chunk_snapshot has non-empty statics", "8", check_statics_nonempty),
+    ("chunk_snapshot has non-empty statics", "12", check_statics_nonempty),
     ("chunk_snapshot has non-empty tiles", "1-2", check_tiles_nonempty),
-    ("chunk_snapshot has a non-empty logistics roster", "5", check_logistics_nonempty),
-    ("inserter-to-chest servicing disambiguates a nearby pair", "4", check_inserter_chest_disambiguation),
+    ("chunk_snapshot has a non-empty logistics roster", "6", check_logistics_nonempty),
+    ("inserter-to-chest servicing disambiguates a nearby pair", "5", check_inserter_chest_disambiguation),
     ("zone_created recorded", "1-2", present("zone_created")),
-    ("zone_expired recorded", "2-6", present("zone_expired")),
+    ("zone_expired recorded", "3-7", present("zone_expired")),
     ("mobile_positions recorded", "1-2", present("mobile_positions")),
-    ("death_event recorded", "8", present("death_event")),
-    ("kill classification covers biter/spitter/worm/spawner", "10, 12", check_kill_classification),
-    ("score_update recorded", "15", present("score_update")),
-    ("player_respawn recorded", "15", present("player_respawn")),
-    ("damage_event recorded", "8", present("damage_event")),
-    ("damage_event includes turret-dealt damage", "8", check_turret_damage),
-    ("death_event includes a turret being destroyed", "8", check_turret_destroyed),
-    ("projectile_impact recorded", "8, 13", present("projectile_impact")),
-    ("effect_created recorded (fire/acid)", "8, 12", present("effect_created")),
-    ("effect_expired recorded (fire/acid fading)", "8, 12", present("effect_expired")),
-    ("vehicle diversity (car + spidertron seen)", "13-14", check_vehicle_diversity),
-    ("belt_contents recorded", "2", present("belt_contents")),
-    ("item_distribution recorded (long-chain rollup)", "2-3", present("item_distribution")),
-    ("fluid_delta recorded", "6, 17", present("fluid_delta")),
-    ("inventory_delta owner_kind coverage", "3-5, 8-18", check_owner_kinds),
-    ("corpse_created recorded", "15", present("corpse_created")),
-    ("corpse_expired recorded", "15", present("corpse_expired")),
-    ("ground_item_created recorded", "16", present("ground_item_created")),
-    ("ground_item_removed recorded", "16", present("ground_item_removed")),
-    ("unit_group_created recorded", "19", present("unit_group_created")),
+    ("death_event recorded", "12", present("death_event")),
+    ("kill classification covers biter/spitter/worm/spawner", "14, 16", check_kill_classification),
+    ("score_update recorded", "19", present("score_update")),
+    ("player_respawn recorded", "19", present("player_respawn")),
+    ("damage_event recorded", "12", present("damage_event")),
+    ("damage_event includes turret-dealt damage", "12", check_turret_damage),
+    ("death_event includes a turret being destroyed", "12", check_turret_destroyed),
+    ("projectile_impact recorded", "12, 17", present("projectile_impact")),
+    ("effect_created recorded (fire/acid)", "12, 16", present("effect_created")),
+    ("effect_expired recorded (fire/acid fading)", "12, 16", present("effect_expired")),
+    ("vehicle diversity (car + spidertron seen)", "13, 18", check_vehicle_diversity),
+    ("belt_contents recorded", "3", present("belt_contents")),
+    ("item_distribution recorded (long-chain rollup)", "3-4", present("item_distribution")),
+    ("fluid_delta recorded", "7, 11", present("fluid_delta")),
+    ("inventory_delta owner_kind coverage", "3-19", check_owner_kinds),
+    ("corpse_created recorded", "19", present("corpse_created")),
+    ("corpse_expired recorded", "19", present("corpse_expired")),
+    ("ground_item_created recorded", "9", present("ground_item_created")),
+    ("ground_item_removed recorded", "9", present("ground_item_removed")),
+    ("unit_group_created recorded", "20", present("unit_group_created")),
 ]
 
 
