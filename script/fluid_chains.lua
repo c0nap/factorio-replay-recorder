@@ -6,22 +6,17 @@
 -- pipe network outward from there the same way item_chains follows belts
 -- and inserters.
 --
--- UNVERIFIED (PR #13): every method this file previously called directly
--- on LuaEntity (get_fluid_box_neighbours/has_fluid_segment/
--- get_fluid_segment_fluid) errored with "LuaEntity doesn't contain key
--- ..." on a real 2.0.76 run, despite matching real API docs fetched
--- earlier in this project - a genuine, unresolved contradiction. This
--- rewrite switches to a different shape - fluid methods living on
--- `entity.fluidbox` (a LuaFluidBox wrapper) instead of on LuaEntity
--- directly - on the theory that the docs fetched (and the ones this is
--- now based on) describe a different Factorio version than 2.0.76 is
--- running. That theory is NOT independently confirmed - it's the
--- explicit direction to try next, to be reverted if it turns out no
--- better than what was here before. Every call below is still
--- pcall-guarded and still logs on failure, same as before, so a wrong
--- guess here fails exactly as visibly as the last one did.
+-- CONFIRMED (PR #13/#14) against real 2.0.76 data: fluid methods live on
+-- `entity.fluidbox` (a LuaFluidBox wrapper), not on LuaEntity directly -
+-- the previous LuaEntity-level methods (get_fluid_box_neighbours/
+-- has_fluid_segment/get_fluid_segment_fluid) errored with "LuaEntity
+-- doesn't contain key ..." on this Factorio version even though they
+-- matched docs fetched for a different one. A live probe against a real
+-- fluid-filled tank confirmed this exact shape, and the checklist's
+-- distant-fluid-chain step now passes end to end (`fluid_delta` recorded
+-- with fluid actually flowing through it).
 --
--- Assumed shape, per that direction:
+-- Confirmed shape:
 --   entity.fluidbox[index]                    -> {name, amount, temperature} or nil
 --   entity.fluidbox.get_connections(index)     -> array of LuaFluidBox (connected boxes, not entities)
 --   connected_box.owner                        -> the LuaEntity that box belongs to
@@ -139,55 +134,6 @@ local function discover_component(start_entity, start_index, visited_boxes)
     return component
 end
 
--- TEMPORARY (PR #13): a live console probe already confirmed entity.fluidbox
--- exists (userdata) while every LuaEntity-level segment method
--- (get_fluid_box_neighbours/has_fluid_segment/get_fluid_segment_fluid/
--- get_fluid_segment_id/get_fluid_segment_contents) errors with "doesn't
--- contain key" - but that probe used a freshly created, EMPTY tank, so
--- entity.fluidbox[1] came back ambiguous (nil-because-empty and
--- nil-because-not-indexable-that-way both hit the same branch). This
--- probes the real thing instead: the first seed actually encountered
--- during real play with fluid already in it (every checklist fluid step
--- inserts fluid before this ever runs), pcall-guarding each candidate
--- separately so nil and ERROR are never conflated. Also now the
--- authoritative check on whether THIS rewrite's assumed shape is right -
--- if get_connections/get_fluid_segment_id/get_fluid_segment_contents come
--- back ERROR here too, the wrapper theory is wrong, not just the exact
--- method names. Logs once per session. Remove once the real shape is
--- confirmed either way.
-local function probe_fluidbox_shape(entity)
-    if storage.fluid_api_probe_done then return end
-    storage.fluid_api_probe_done = true
-
-    local function p(name, fn)
-        local ok, v = pcall(fn)
-        if not ok then return name .. "=ERROR(" .. tostring(v) .. ")" end
-        if v == nil then return name .. "=nil" end
-        return name .. "=" .. tostring(v) .. "(" .. type(v) .. ")"
-    end
-
-    local parts = {p("entity.fluidbox", function() return entity.fluidbox end)}
-
-    local ok_box, box = pcall(function() return entity.fluidbox and entity.fluidbox[1] end)
-    if ok_box and box ~= nil then
-        table.insert(parts, p("fluidbox[1]", function() return box end))
-        table.insert(parts, p("fluidbox[1].owner", function() return box.owner end))
-        table.insert(parts, p("fluidbox[1].amount", function() return box.amount end))
-        table.insert(parts, p("fluidbox[1].name", function() return box.name end))
-        table.insert(parts, p("fluidbox[1].get_connections", function() return box.get_connections end))
-        table.insert(parts, p("fluidbox[1].get_fluid_segment_contents", function() return box.get_fluid_segment_contents end))
-        table.insert(parts, p("fluidbox[1].get_fluid_segment_id", function() return box.get_fluid_segment_id end))
-    else
-        table.insert(parts, ok_box and "fluidbox[1]=nil" or ("fluidbox[1]=ERROR(" .. tostring(box) .. ")"))
-    end
-
-    table.insert(parts, p("fluidbox.get_connections(1)", function() return entity.fluidbox.get_connections(1) end))
-    table.insert(parts, p("fluidbox.get_fluid_segment_contents(1)", function() return entity.fluidbox.get_fluid_segment_contents(1) end))
-    table.insert(parts, p("fluidbox.get_fluid_segment_id(1)", function() return entity.fluidbox.get_fluid_segment_id(1) end))
-
-    log("[replay-recorder-probe] fluidbox shape on " .. entity.name .. ": " .. table.concat(parts, " | "))
-end
-
 -- One walk per currently active zone, seeded from pipes/tanks/pumps/
 -- flamethrower turrets physically in it. `visited_boxes`/`reported` are
 -- shared across every zone processed in this call (passed in from
@@ -209,7 +155,6 @@ local function process_zone(surface, area, visited_boxes, reported)
                 log("[replay-recorder] FluidChains: " .. seed.name .. ".fluids_count failed: " .. tostring(count))
             end
             if count_ok and count and count > 0 then
-                probe_fluidbox_shape(seed)
                 for index = 1, count do
                     local key = seed.unit_number .. "_" .. index
                     if not visited_boxes[key] then

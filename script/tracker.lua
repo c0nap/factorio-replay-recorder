@@ -69,32 +69,17 @@ function Tracker.on_entity_died(event)
     local entity = event.entity
     if not entity.valid then return end
 
-    -- TEMPORARY (PR #13): effect_expired stayed at 0 events in the same
-    -- session where effect_created also never fired - one theory tried
-    -- this round is that on_trigger_created_entity simply never fires by
-    -- default (see data-updates.lua), but that doesn't explain the
-    -- EXPIRY side: on_entity_died is a completely different, unrelated
-    -- event, and whether it fires at all for a time-to-live-expired fire/
-    -- acid patch (as opposed to only for entities destroyed by damage)
-    -- has never been confirmed either way. Rather than build a much
-    -- larger polling-based fallback on that unconfirmed premise, log
-    -- every distinct (name, type) on_entity_died ever sees, once each -
-    -- if "fire"-typed entities never show up here at all, that confirms
-    -- the bigger rewrite is actually needed; if they show up under a
-    -- different type string, this is a one-line fix instead.
-    storage.entity_died_probe_seen = storage.entity_died_probe_seen or {}
-    local died_probe_key = entity.name .. "/" .. entity.type
-    if not storage.entity_died_probe_seen[died_probe_key] then
-        storage.entity_died_probe_seen[died_probe_key] = true
-        log("[replay-recorder-probe] on_entity_died: name=" .. entity.name .. " type=" .. entity.type)
-    end
-
-    -- Fire/acid patches expire on their own (their "health" is really a
-    -- countdown timer). That's the "acid entity loses potency and fades"
-    -- event from the design doc, but it isn't new combat, so it gets a
-    -- light-weight record and does NOT open or extend a combat zone.
+    -- CONFIRMED (PR #14 probe): on_entity_died never fires for a fire/acid
+    -- patch's time-to-live expiry - a real session with both the
+    -- flamethrower (step 12) and a spitter fight (step 14) produced zero
+    -- on_entity_died lines for any fire-typed entity, despite
+    -- on_trigger_created_entity confirming they were created. This branch
+    -- is kept (harmless no-op) in case some other death path - an
+    -- explosion clearing a patch early, say - ever does route through
+    -- here, but effect_expired itself needs a different mechanism than
+    -- on_entity_died to ever fire; see the TODO on TrackerEvents.
+    -- on_object_destroyed for where that's headed.
     if entity.type == "fire" then
-        Exporter.log_event(game.tick, "effect_expired", {name = entity.name, position = entity.position})
         return
     end
 
@@ -223,26 +208,6 @@ function Tracker.on_player_died(event)
     -- death this same player never fully cleared.
     local corpses = player.surface.find_entities_filtered{type = "character-corpse"}
 
-    -- TEMPORARY (PR #13): corpse_created stayed at 0 events across a full
-    -- real session that DID include a death+respawn (player_respawn was
-    -- recorded), with no error anywhere - the loop below found zero
-    -- matches and just silently moved on. Rather than guess why (wrong
-    -- tick-of-death assumption? corpse not actually created synchronously?
-    -- a property name off by a character?), log every candidate this scan
-    -- actually finds, unconditionally, so the next real death answers it
-    -- directly instead of needing another guess. Remove once resolved.
-    local probe = {}
-    for _, corpse in pairs(corpses) do
-        if corpse.valid then
-            table.insert(probe, "unit_number=" .. tostring(corpse.unit_number)
-                .. " player_index=" .. tostring(corpse.character_corpse_player_index)
-                .. " tick_of_death=" .. tostring(corpse.character_corpse_tick_of_death))
-        end
-    end
-    log("[replay-recorder-probe] on_player_died: event.player_index=" .. tostring(event.player_index)
-        .. " game.tick=" .. tostring(game.tick) .. " candidates_found=" .. #corpses
-        .. (#probe > 0 and (" [" .. table.concat(probe, "; ") .. "]") or ""))
-
     for _, corpse in pairs(corpses) do
         if corpse.valid and corpse.character_corpse_player_index == event.player_index
             and corpse.character_corpse_tick_of_death == game.tick then
@@ -318,32 +283,18 @@ function Tracker.on_script_trigger_effect(event)
     })
 end
 
--- The other half of "an acid entity loses potency and fades away" from
--- the design doc: on_entity_died's "fire" branch above already covers the
--- fade-out, this covers the creation ("a spitter shoots acid at a tile"),
--- so a viewer sees the full lifetime of a fire/acid patch instead of just
--- its end.
+-- The creation half of "an acid entity loses potency and fades away" from
+-- the design doc ("a spitter shoots acid at a tile") - see the TODO on
+-- TrackerEvents.on_object_destroyed for the fade-out half, which turned
+-- out to need a different mechanism than on_entity_died entirely.
 function Tracker.on_trigger_created_entity(event)
     local entity = event.entity
     if not entity or not entity.valid then return end
 
-    -- TEMPORARY (PR #13): effect_created/effect_expired stayed at 0 events
-    -- across a full real session that included both the flamethrower
-    -- turret test (step 11) and a real spitter fight (step 15) - the
-    -- `entity.type ~= "fire"` filter below has never actually been
-    -- confirmed against real data, it was carried over from before this
-    -- project started checking API assumptions this strictly. Log every
-    -- distinct (name, type) this event ever produces, once each, so the
-    -- next real session shows exactly what a flamethrower's flame patch
-    -- and a spitter's acid patch actually report as their type - remove
-    -- this and fix the filter once that's known.
-    storage.trigger_entity_probe_seen = storage.trigger_entity_probe_seen or {}
-    local probe_key = entity.name .. "/" .. entity.type
-    if not storage.trigger_entity_probe_seen[probe_key] then
-        storage.trigger_entity_probe_seen[probe_key] = true
-        log("[replay-recorder-probe] on_trigger_created_entity: name=" .. entity.name .. " type=" .. entity.type)
-    end
-
+    -- CONFIRMED (PR #13/#14 probes): a flamethrower's flame patch and a
+    -- spitter/worm's acid patch are both entity.type == "fire" on real
+    -- 2.0.76 data, and data-updates.lua's trigger_created_entity flag is
+    -- what makes this event fire for them at all.
     if entity.type ~= "fire" then return end
 
     local in_zone = CombatZones.notify_and_check(entity.surface, entity.position)

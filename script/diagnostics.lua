@@ -35,13 +35,22 @@ local LOG_MARKER = "[replay-recorder-diagnostics]"
 -- just a handful of nil checks - no profiler objects ever get created.
 function Diagnostics.start_tick()
     if not Config.diagnostics_enabled() then return nil end
-    return {tick = game.create_profiler(), scan = game.create_profiler()}
+    return {tick = game.create_profiler()}
 end
 
--- Call once the tick's scan work (CombatZones/Tracker/Logistics/ItemChains/
--- FluidChains) is done, before any Exporter.flush().
+-- Call right before the tick's scan work (CombatZones/Tracker/Logistics/
+-- ItemChains/FluidChains) begins - deliberately NOT part of start_tick():
+-- control.lua's early-flush check now runs before scan work, and creating
+-- this profiler any earlier than that would silently fold the flush's own
+-- write time into what's supposed to be a pure scan measurement.
+function Diagnostics.start_scan(handles)
+    if not handles then return end
+    handles.scan = game.create_profiler()
+end
+
+-- Call once the tick's scan work is done, before any further Exporter.flush().
 function Diagnostics.end_scan(handles)
-    if handles then handles.scan.stop() end
+    if handles and handles.scan then handles.scan.stop() end
 end
 
 -- Call immediately before Exporter.flush(), only on ticks where a flush is

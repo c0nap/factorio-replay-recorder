@@ -176,12 +176,54 @@ def check_owner_kinds(events):
     return True, f"saw {', '.join(sorted(kinds))}"
 
 
+def check_acid_source_diversity(events):
+    """Step 14 merges the worm and spitter acid tests so both patches are
+    live at once - a source-name count of >= 2 confirms two genuinely
+    distinct attackers created fire/acid, not just repeated hits from one
+    (step 12's flamethrower is a third possible source, so this is a
+    floor, not an exact count)."""
+    sources = {v for v in _values(events, "effect_created", ["source"]) if v}
+    if len(sources) < 2:
+        return False, (
+            f"expected effect_created from at least 2 distinct sources (the worm and spitter "
+            f"in step 14, plus step 12's flamethrower), saw: {', '.join(sorted(sources)) or 'none'}"
+        )
+    return True, f"saw sources: {', '.join(sorted(sources))}"
+
+
+def check_vehicle_combat_credit_diversity(events):
+    """Step 16: the tank should credit damage two different ways - a
+    dealt_by projectile for the shot target, and no dealt_by (a bare
+    collision) for the run-over target. Checking for both, rather than
+    just any damage_event with dealer=tank, is what actually confirms
+    both mechanisms fired instead of one masking the other."""
+    shot = False
+    ran_over = False
+    for e in events:
+        if e.get("type") != "damage_event":
+            continue
+        data = e.get("data", {})
+        if data.get("dealer") != "tank":
+            continue
+        if data.get("dealt_by"):
+            shot = True
+        else:
+            ran_over = True
+
+    if not shot:
+        return False, "no damage_event dealt by the tank via a projectile (dealt_by set) - the shot target"
+    if not ran_over:
+        return False, "no damage_event dealt by the tank with no dealt_by (a bare collision) - the run-over target"
+    return True, "saw both a projectile-dealt hit and a bare collision credited to the tank"
+
+
 # (check name, checklist step to re-run on failure, check function)
 # Step numbers below match docs/testing-checklist.md's current order (a
 # dedicated zone-lifecycle step 2, full recording mode turned on as early
 # as steps 3-7's near/far tests allow at step 8, ground items/robot cargo/
 # basic fluids moved after it since they no longer need their own
-# zone-opening kill - see that file's step 3/8 notes for why).
+# zone-opening kill, and the old spitter-acid step folded into the worm/
+# spawner kill-classification step - see that file's step 3/8/14 notes).
 CHECKS = [
     ("chunk_snapshot recorded", "1-2", present("chunk_snapshot")),
     ("chunk_snapshot has non-empty statics", "12", check_statics_nonempty),
@@ -192,25 +234,27 @@ CHECKS = [
     ("zone_expired recorded", "3-7", present("zone_expired")),
     ("mobile_positions recorded", "1-2", present("mobile_positions")),
     ("death_event recorded", "12", present("death_event")),
-    ("kill classification covers biter/spitter/worm/spawner", "14, 16", check_kill_classification),
-    ("score_update recorded", "19", present("score_update")),
-    ("player_respawn recorded", "19", present("player_respawn")),
+    ("kill classification covers biter/spitter/worm/spawner", "14", check_kill_classification),
+    ("score_update recorded", "18", present("score_update")),
+    ("player_respawn recorded", "18", present("player_respawn")),
     ("damage_event recorded", "12", present("damage_event")),
     ("damage_event includes turret-dealt damage", "12", check_turret_damage),
     ("death_event includes a turret being destroyed", "12", check_turret_destroyed),
-    ("projectile_impact recorded", "12, 17", present("projectile_impact")),
-    ("effect_created recorded (fire/acid)", "12, 16", present("effect_created")),
-    ("effect_expired recorded (fire/acid fading)", "12, 16", present("effect_expired")),
-    ("vehicle diversity (car + spidertron seen)", "13, 18", check_vehicle_diversity),
+    ("projectile_impact recorded", "12, 16", present("projectile_impact")),
+    ("effect_created recorded (fire/acid)", "12, 14", present("effect_created")),
+    ("effect_expired recorded (fire/acid fading)", "12, 14", present("effect_expired")),
+    ("acid effect diversity (worm + spitter sources)", "14", check_acid_source_diversity),
+    ("vehicle diversity (car + spidertron seen)", "13, 17", check_vehicle_diversity),
+    ("vehicle combat damage/kill credit diversity (shot vs. run over)", "16", check_vehicle_combat_credit_diversity),
     ("belt_contents recorded", "3", present("belt_contents")),
     ("item_distribution recorded (long-chain rollup)", "3-4", present("item_distribution")),
     ("fluid_delta recorded", "7, 11", present("fluid_delta")),
-    ("inventory_delta owner_kind coverage", "3-19", check_owner_kinds),
-    ("corpse_created recorded", "19", present("corpse_created")),
-    ("corpse_expired recorded", "19", present("corpse_expired")),
+    ("inventory_delta owner_kind coverage", "3-18", check_owner_kinds),
+    ("corpse_created recorded", "18", present("corpse_created")),
+    ("corpse_expired recorded", "18", present("corpse_expired")),
     ("ground_item_created recorded", "9", present("ground_item_created")),
     ("ground_item_removed recorded", "9", present("ground_item_removed")),
-    ("unit_group_created recorded", "20", present("unit_group_created")),
+    ("unit_group_created recorded", "19", present("unit_group_created")),
 ]
 
 

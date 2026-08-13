@@ -204,6 +204,19 @@ end
 -- one we actually registered ourselves, via storage.registered_ground_items.
 -- Clears the cache entry (the actual fix for the leak) and emits a
 -- one-time ground_item_removed event, mirroring corpse_expired.
+--
+-- TODO (PR #14, blocked on API confirmation): this whole useful_id-keyed
+-- scheme is currently dead - item-entity (ground items) confirmed to
+-- never have a unit_number, so ensure_ground_item_registered's unit_number
+-- guard means register_on_object_destroyed is never actually called for
+-- one, and ground_item_removed stays at 0 events. The fix needs
+-- confirmation of what register_on_object_destroyed returns and what
+-- on_object_destroyed's payload looks like for a target with no
+-- unit_number (registration_number instead of useful_id, most likely) -
+-- once confirmed, this same mechanism is also the fix for Tracker.
+-- on_entity_died's fire/acid effect_expired gap (fire entities never fire
+-- on_entity_died on expiry either, and may have the same no-unit_number
+-- situation as ground items).
 function TrackerEvents.on_object_destroyed(event)
     if event.type ~= defines.target_type.entity then return end
     if not storage.registered_ground_items[event.useful_id] then return end
@@ -299,33 +312,19 @@ end
 -- it's physically in an active zone, just without this provenance record.
 function TrackerEvents.on_player_dropped_item(event)
     local entity = event.entity
-
-    -- TEMPORARY (PR #13): ground_item_created/ground_item_removed and
-    -- inventory_delta's ground_item owner_kind all stayed at 0 events in
-    -- a real session, with zero evidence of why. Log unconditionally -
-    -- this event is rare enough (one manual drop per checklist run) that
-    -- spam isn't a concern.
-    local probe_msg = "[replay-recorder-probe] on_player_dropped_item: event.entity=" .. tostring(entity)
-    if entity then
-        probe_msg = probe_msg .. " valid=" .. tostring(entity.valid)
-        if entity.valid then
-            probe_msg = probe_msg .. " unit_number=" .. tostring(entity.unit_number)
-        end
-    end
-    log(probe_msg)
-
     if not entity or not entity.valid then return end
 
     -- unit_number is no longer required to log this creation event - a
     -- corpse in an earlier round turned out to only sometimes have one,
-    -- and requiring it there silently rejected every real corpse. If
-    -- item-entity turns out to have the same characteristic,
-    -- ensure_ground_item_registered (needs a stable id for the
-    -- on_object_destroyed registry, not just a one-time event) still
-    -- gates on unit_number and simply skips registration when absent -
-    -- ongoing content/removal tracking for such an item would be a real,
-    -- known gap, but this creation event no longer silently disappears
-    -- with it.
+    -- and requiring it there silently rejected every real corpse.
+    -- CONFIRMED: item-entity (ground items) never has a unit_number at
+    -- all, not just sometimes. ensure_ground_item_registered still gates
+    -- on unit_number and so never actually registers a ground item for
+    -- removal tracking - this creation event no longer silently
+    -- disappears because of it, but ongoing content/removal tracking for
+    -- ground items is a real, known gap (see the TODO on TrackerEvents.
+    -- on_object_destroyed) until that's redesigned around a key that
+    -- doesn't need one.
     TrackerEvents.ensure_ground_item_registered(entity)
     local owner_key
     if entity.unit_number then
