@@ -73,12 +73,16 @@ function Tracker.on_entity_died(event)
     -- patch's time-to-live expiry - a real session with both the
     -- flamethrower (step 12) and a spitter fight (step 14) produced zero
     -- on_entity_died lines for any fire-typed entity, despite
-    -- on_trigger_created_entity confirming they were created. This branch
-    -- is kept (harmless no-op) in case some other death path - an
-    -- explosion clearing a patch early, say - ever does route through
-    -- here, but effect_expired itself needs a different mechanism than
-    -- on_entity_died to ever fire; see the TODO on TrackerEvents.
-    -- on_object_destroyed for where that's headed.
+    -- on_trigger_created_entity confirming they were created. effect_expired
+    -- is instead produced via register_on_object_destroyed - see
+    -- on_trigger_created_entity below (where it's registered) and
+    -- TrackerEvents.on_object_destroyed (where it actually fires). This
+    -- branch is kept as a harmless no-op in case some other death path -
+    -- an explosion clearing a patch early, say - ever does route a fire
+    -- entity through on_entity_died after all: without it, a fire "victim"
+    -- would otherwise fall through to the generic death_event/scoring
+    -- logic below, which doesn't make sense for a patch that isn't a
+    -- combat participant.
     if entity.type == "fire" then
         return
     end
@@ -284,9 +288,8 @@ function Tracker.on_script_trigger_effect(event)
 end
 
 -- The creation half of "an acid entity loses potency and fades away" from
--- the design doc ("a spitter shoots acid at a tile") - see the TODO on
--- TrackerEvents.on_object_destroyed for the fade-out half, which turned
--- out to need a different mechanism than on_entity_died entirely.
+-- the design doc ("a spitter shoots acid at a tile") - also where the
+-- fade-out half gets set up, via TrackerEvents.on_object_destroyed.
 function Tracker.on_trigger_created_entity(event)
     local entity = event.entity
     if not entity or not entity.valid then return end
@@ -299,6 +302,22 @@ function Tracker.on_trigger_created_entity(event)
 
     local in_zone = CombatZones.notify_and_check(entity.surface, entity.position)
     if not (in_zone or Config.full_recording_mode()) then return end
+
+    -- CONFIRMED (PR #14 probe): on_entity_died never fires for a fire/acid
+    -- patch's time-to-live expiry (see Tracker.on_entity_died's fire
+    -- branch), so effect_expired has to come from register_on_object_
+    -- destroyed instead - the same mechanism TrackerEvents.ground_item_key
+    -- uses for ground items, which fires regardless of WHY the entity
+    -- disappeared. The entity is already gone by the time on_object_
+    -- destroyed fires, so its name/position have to be cached now, at
+    -- creation, in storage.registered_fire_effects - there's nothing left
+    -- to read them off of once the event actually arrives.
+    local ok, registration_number = pcall(function() return script.register_on_object_destroyed(entity) end)
+    if ok then
+        storage.registered_fire_effects[registration_number] = {name = entity.name, position = entity.position}
+    else
+        log("[replay-recorder] Tracker: register_on_object_destroyed failed for " .. entity.name .. ": " .. tostring(registration_number))
+    end
 
     local source = event.source
     Exporter.log_event(game.tick, "effect_created", {
@@ -392,12 +411,12 @@ local function unit_group_id(ent)
 end
 
 -- Everything "physically here" that isn't already covered by the mobile
--- loop or belt loop above: chests, corpses, and inserter hands. Read every
--- tick, same as belts - these are cheap, bounded-by-chunk-size queries,
--- and (design doc) items in a chest or an inserter's grip are exactly the
--- "immediately here on the battlefield" tier, not the "probably on the
--- way" one that script/logistics.lua and script/item_chains.lua sample on
--- a slow interval instead.
+-- loop or belt loop above: chests, corpses, inserter hands, and ground
+-- items. Read every tick, same as belts - these are cheap, bounded-by-
+-- chunk-size queries, and (design doc) items in a chest or an inserter's
+-- grip are exactly the "immediately here on the battlefield" tier, not
+-- the "probably on the way" one that script/logistics.lua and
+-- script/item_chains.lua sample on a slow interval instead.
 local PHYSICAL_ITEM_TYPES = {"container", "logistic-container", "character-corpse", "inserter", "item-entity"}
 
 local function scan_physical_items(surface, area)
@@ -416,17 +435,24 @@ local function scan_physical_items(surface, area)
             -- moment of death, this is what happens to that pile
             -- afterward (looting, partial decay).
             TrackerEvents.log_inventory_delta(corpse_owner_key(ent), "corpse", TrackerEvents.corpse_contents(ent), {position = ent.position})
+        elseif ent.valid and ent.type == "item-entity" then
+            -- Also keyed separately, and for the same reason as corpses -
+            -- item-entity is CONFIRMED to never have a unit_number, unlike
+            -- every other type below. TrackerEvents.ground_item_key
+            -- registers it for on_object_destroyed (idempotently - see
+            -- its own comment) and hands back the resulting stable key.
+            -- Same "no other position channel" situation as corpses too -
+            -- item-entities are dynamic (not in the static chunk dump)
+            -- and inventory_delta otherwise carries no position.
+            local owner_key = TrackerEvents.ground_item_key(ent)
+            if owner_key then
+                TrackerEvents.log_inventory_delta(owner_key, "ground_item", TrackerEvents.ground_item_contents(ent), {position = ent.position})
+            end
         elseif ent.valid and ent.unit_number then
             if ent.type == "container" or ent.type == "logistic-container" then
                 TrackerEvents.log_inventory_delta("container_" .. ent.unit_number, "container", TrackerEvents.container_contents(ent))
             elseif ent.type == "inserter" then
                 TrackerEvents.log_inventory_delta("inserter_" .. ent.unit_number, "inserter_hand", TrackerEvents.held_stack_contents(ent))
-            elseif ent.type == "item-entity" then
-                -- Same "no other position channel" situation as corpses -
-                -- item-entities are dynamic (not in the static chunk dump)
-                -- and inventory_delta otherwise carries no position.
-                TrackerEvents.ensure_ground_item_registered(ent)
-                TrackerEvents.log_inventory_delta("ground_item_" .. ent.unit_number, "ground_item", TrackerEvents.ground_item_contents(ent), {position = ent.position})
             end
         end
     end

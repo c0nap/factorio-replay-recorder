@@ -49,13 +49,22 @@ local function ensure_storage()
     -- dead table around.
     storage.pending_corpse_info = nil
 
-    -- unit_number -> true for every ground item-entity registered via
-    -- script.register_on_object_destroyed, so TrackerEvents.on_object_destroyed
-    -- (a global event covering every object ANY mod registers) knows which
-    -- destroyed entities are actually ours to clean up, and
-    -- ensure_ground_item_registered doesn't re-register one it's already
-    -- watching. Entries are removed once on_object_destroyed fires for them.
+    -- registration_number -> true for every ground item-entity registered
+    -- via script.register_on_object_destroyed (see TrackerEvents.
+    -- ground_item_key), so TrackerEvents.on_object_destroyed (a global
+    -- event covering every object ANY mod registers) knows which destroyed
+    -- entities are actually ours to clean up. Entries are removed once
+    -- on_object_destroyed fires for them.
     storage.registered_ground_items = storage.registered_ground_items or {}
+
+    -- registration_number -> {name, position} for every fire/acid patch
+    -- registered via script.register_on_object_destroyed (see Tracker.
+    -- on_trigger_created_entity), used the same way as
+    -- storage.registered_ground_items above but carrying the entity's own
+    -- data along - it's already gone by the time on_object_destroyed
+    -- fires, so there's nothing left to read name/position off of at that
+    -- point. Entries are removed once on_object_destroyed fires for them.
+    storage.registered_fire_effects = storage.registered_fire_effects or {}
 
     -- Full recording mode's backfill queue: an array of {surface, chunk_x,
     -- chunk_y} entries for already-generated chunks still waiting to be
