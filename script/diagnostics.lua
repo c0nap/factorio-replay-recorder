@@ -1,10 +1,11 @@
 -- script/diagnostics.lua
 -- Optional per-tick performance timing, gated by the rrec-diagnostics-enabled
 -- setting (see script/config.lua). Not a fix for anything - just a way to
--- get real numbers (elapsed tick time, scan compute time, JSON write time)
--- out of a save that's still seeing stalls, instead of guessing at which
--- part is actually slow. See control.lua's on_tick handler for how the
--- three brackets below line up against the work they're timing.
+-- get real numbers (elapsed tick time, scan compute time, JSON write time,
+-- and the buffer/backfill-queue sizes behind them) out of a save that's
+-- still seeing stalls, instead of guessing at which part is actually slow.
+-- See control.lua's on_tick handler for how the three timing brackets
+-- below line up against the work they're timing.
 --
 -- Confirmed against the real LuaProfiler docs: it does NOT expose a raw
 -- time value to Lua at all (deliberately - "these objects don't allow
@@ -85,6 +86,22 @@ function Diagnostics.end_tick(handles, write_profiler)
         table.insert(message, " write_time=")
         table.insert(message, write_profiler)
     end
+
+    -- buffer_size/backfill_remaining are plain numbers, not profilers, but
+    -- ride along in the same LocalisedString table fine - added after a
+    -- round where "is the lag fix even doing anything" couldn't be
+    -- answered from timings alone: these let a real run confirm directly
+    -- whether Config.max_buffered_events()/chunk_backfill_per_tick() are
+    -- actually the values in effect (a save can carry an OLDER stored
+    -- setting value across a mod update - Factorio doesn't retroactively
+    -- apply a new default to an existing save), and whether the backfill/
+    -- flush alternation in control.lua's on_tick is actually keeping the
+    -- buffer bounded rather than piling up.
+    table.insert(message, " buffer_size=")
+    table.insert(message, #storage.replay_buffer)
+    table.insert(message, " backfill_remaining=")
+    table.insert(message, storage.pending_backfill and #storage.pending_backfill or 0)
+
     log(message)
 end
 

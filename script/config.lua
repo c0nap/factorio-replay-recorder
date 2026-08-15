@@ -67,14 +67,21 @@ end
 -- tick instead spreads that same total cost across many ticks so no
 -- single tick pays for more than this many chunks' worth of engine calls.
 --
--- Lowered from 20 to 8, then to 3: even with max-buffered-events already
--- down to 10 (see Config.max_buffered_events), real data showed a
--- ~32-tick stutter (~0.5s, single ticks over 450ms) right at the moment
--- full recording turned on - each chunk_snapshot event is a heavy
--- payload (tiles + statics + logistics), so 8/tick was still queuing
--- scan work (and, transitively, writes) faster than the game could
--- absorb per frame. Queuing fewer per tick attacks the actual source of
--- the burst, not just how fast it drains.
+-- Lowered from 20 to 8, then to 3, then to 2: even after the first two
+-- rounds of lowering this, a real full-recording session still showed a
+-- ~49-tick stutter (~0.8s, single ticks over 350ms) right at the moment
+-- full recording turned on. It turned out the reordering fix that used to
+-- be described here didn't actually decouple anything - see control.lua's
+-- on_tick for why, and for the real fix (alternating backfill ticks and
+-- flush ticks instead of just reordering within one). This value only
+-- controls how much SCAN work one backfill tick does; with a genuinely
+-- separate tick to itself now, 2 chunks/tick keeps even that isolated
+-- cost small, in exchange for the backfill queue draining more slowly
+-- overall. NOTE: an existing save keeps whatever value this setting was
+-- last explicitly set to, even across a mod update that changes this
+-- default - if a real run doesn't show the expected drop, check
+-- diagnostics_enabled's log output (now includes backfill_remaining) to
+-- confirm the ACTUAL in-effect value, not just this file's default.
 function Config.chunk_backfill_per_tick()
     return settings.global["rrec-chunk-backfill-per-tick"].value
 end
@@ -114,19 +121,19 @@ end
 -- before the first flush even fires - is what actually froze the game for
 -- multiple seconds, not the backfill's own per-chunk scanning.
 --
--- Lowered from 25 to 10, then to 3 after a real full-recording session
--- at 10 still showed a single `write` taking up to 377ms and a single
--- `tick` up to 458ms (tools/inspect_logs.py's max column) - clearly
--- noticeable, not the "spread out further" the throttle is meant to
--- deliver. Each buffered chunk_snapshot is heavy enough on its own
--- (tiles + statics + logistics, serialized as JSON) that the entry
--- COUNT this caps matters as much as the interval Config.flush_interval_
--- ticks() caps - smaller flushes mean more of them, but each one is
--- cheap enough that no single tick should stand out. See control.lua's
--- on_tick for the other half of this fix: the early-flush check now
--- runs BEFORE this tick's own scan/backfill work adds to the buffer,
--- so a tick whose scan crosses this threshold pays for the resulting
--- write next tick instead of stacking both costs into one frame.
+-- Lowered from 25 to 10, then to 3, then to 2. Each buffered chunk_snapshot
+-- is heavy enough on its own (tiles + statics + logistics, serialized as
+-- JSON) that the entry COUNT this caps matters as much as the interval
+-- Config.flush_interval_ticks() caps - smaller flushes mean more of them,
+-- but each one is cheap enough that no single tick should stand out. See
+-- control.lua's on_tick for the other half of this fix: a flush is now
+-- alternated onto its own tick, never sharing one with a backfill scan,
+-- which turned out to matter more than this value alone did. NOTE: an
+-- existing save keeps whatever value this setting was last explicitly set
+-- to, even across a mod update that changes this default - if a real run
+-- doesn't show the expected drop, check diagnostics_enabled's log output
+-- (now includes buffer_size) to confirm the ACTUAL in-effect value, not
+-- just this file's default.
 function Config.max_buffered_events()
     return settings.global["rrec-max-buffered-events"].value
 end

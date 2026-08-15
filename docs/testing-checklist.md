@@ -41,16 +41,21 @@ just enemies.
 Type this one twice - Factorio's misfire guard on the first console
 command of a session.
 ```
-/c game.player.force.research_all_technologies(); game.speed=3; settings.global["rrec-combat-radius"] = {value = 100}; settings.global["rrec-distant-sample-interval-seconds"] = {value = 1}; settings.global["rrec-chain-near-hops"] = {value = 1}; settings.global["rrec-chain-max-hops"] = {value = 50}; settings.global["rrec-diagnostics-enabled"] = {value = true}; settings.global["rrec-battlefield-marker-enabled"] = {value = true}
+/c game.player.force.research_all_technologies(); game.speed=3; settings.global["rrec-combat-radius"] = {value = 100}; settings.global["rrec-distant-sample-interval-seconds"] = {value = 1}; settings.global["rrec-chain-near-hops"] = {value = 1}; settings.global["rrec-chain-max-hops"] = {value = 50}; settings.global["rrec-chunk-backfill-per-tick"] = {value = 2}; settings.global["rrec-max-buffered-events"] = {value = 2}; settings.global["rrec-diagnostics-enabled"] = {value = true}; settings.global["rrec-battlefield-marker-enabled"] = {value = true}
 ```
 Turns on diagnostics and the battlefield marker (cyan outline around
 active zones). Also widens the combat radius to 100 tiles - steps 4-7
-below each place their scripted kill a couple of chunks from where
-you're standing, and the default radius (48) is too short for that kill
-to open a zone at all, which means neither the marker nor the distant-
-chain recording those steps are testing would ever kick in. See "After
-you're done" below for where the diagnostics data ends up and how to
-read it.
+below each place their scripted kill a chunk or two from where you're
+standing, and the default radius (48) can be too short for that kill to
+open a zone at all, which means neither the marker nor the distant-chain
+recording those steps are testing would ever kick in. The chunk-backfill
+and max-buffered-events settings are pinned explicitly too, not left to
+the mod's own defaults - an existing save keeps whatever value it last
+had for a setting even after a mod update changes that default, so
+setting them here guarantees this run actually exercises the current
+full-recording throttling rather than silently running on stale numbers.
+See "After you're done" below for where the diagnostics data ends up and
+how to read it.
 ```
 /c local p = game.player.position; for _, t in ipairs(game.player.surface.find_entities_filtered{position = p, radius = 150, type = "tree"}) do t.destroy() end
 ```
@@ -70,8 +75,8 @@ through eighteen other steps' noise.
 ```
 /c local b = game.player.surface.create_entity{name = "small-biter", position = {game.player.position.x + 1, game.player.position.y}, force = "enemy"}; b.die()
 ```
-Wait ~15 seconds (longer than the default zone timeout) for the zone to
-expire on its own.
+Wait until the cyan outline disappears - confirms `zone_expired` fired on
+its own, not just `zone_created`.
 
 ## 3. Long-chain rollup via belts (`item_distribution`)
 
@@ -90,7 +95,7 @@ five steps would produce nothing to check.
 ```
 /c local surface = game.player.surface; local base = game.player.position; local far_belt; for i = 0, 35 do far_belt = surface.create_entity{name = "transport-belt", position = {base.x + i, base.y + 20}, direction = defines.direction.east, force = "player"} or far_belt end; far_belt.get_transport_line(1).insert_at_back{name = "iron-plate", count = 5}; local b = surface.create_entity{name = "small-biter", position = {base.x, base.y + 20}, force = "enemy"}; b.die()
 ```
-Wait a couple of seconds.
+Wait until the cyan outline disappears.
 
 ## 4. Distant chest via an inserter chain
 
@@ -102,7 +107,7 @@ lands in a chunk that was never itself active.
 ```
 /c local surface = game.player.surface; local base = game.player.position; local ccx = math.floor(base.x / 32) * 32; local ccy = math.floor(base.y / 32) * 32; local ins = surface.create_entity{name = "inserter", position = {ccx + 31, ccy + 16}, direction = defines.direction.east, force = "player"}; local chest = surface.create_entity{name = "iron-chest", position = {ccx + 32, ccy + 16}, force = "player"}; chest.get_inventory(defines.inventory.chest).insert{name = "copper-plate", count = 30}; local b = surface.create_entity{name = "small-biter", position = {ccx + 31, ccy + 15}, force = "enemy"}; b.die()
 ```
-Wait a couple of seconds.
+Wait until the cyan outline disappears.
 
 ## 5. Inserter-to-chest servicing under ambiguity
 
@@ -116,28 +121,29 @@ not just an easy isolated case. Also includes a third, self-fueled
 `burner-inserter` actually carrying an item between two chests - none of
 this checklist's other scripted inserters ever have a real item source
 behind them to pick up from, so without this, `inventory_delta` with
-`owner_kind = inserter_hand` is never exercised anywhere. Anchored 2
-chunks (64 tiles) from the player via `ccx`/`ccy`, within the widened
-combat radius from step 1, so the kill below actually opens a zone.
+`owner_kind = inserter_hand` is never exercised anywhere. Anchored 1
+chunk (32 tiles) from the player via `ccx`/`ccy` - close enough that the
+cyan outline is easy to see, and well within the widened combat radius
+from step 1.
 
 ```
-/c local surface = game.player.surface; local base = game.player.position; local ccx = math.floor(base.x / 32) * 32; local ccy = math.floor((base.y + 64) / 32) * 32; local ins_a = surface.create_entity{name = "inserter", position = {ccx + 10, ccy + 10}, direction = defines.direction.east, force = "player"}; local chest_a = surface.create_entity{name = "iron-chest", position = {ccx + 11, ccy + 10}, force = "player"}; chest_a.get_inventory(defines.inventory.chest).insert{name = "iron-plate", count = 40}; local ins_b = surface.create_entity{name = "inserter", position = {ccx + 10, ccy + 12}, direction = defines.direction.south, force = "player"}; local chest_b = surface.create_entity{name = "iron-chest", position = {ccx + 10, ccy + 13}, force = "player"}; chest_b.get_inventory(defines.inventory.chest).insert{name = "copper-plate", count = 40}; local src = surface.create_entity{name = "iron-chest", position = {ccx + 16, ccy + 10}, force = "player"}; src.get_inventory(defines.inventory.chest).insert{name = "iron-plate", count = 20}; local dst = surface.create_entity{name = "iron-chest", position = {ccx + 18, ccy + 10}, force = "player"}; local feeder = surface.create_entity{name = "burner-inserter", position = {ccx + 17, ccy + 10}, direction = defines.direction.east, force = "player"}; feeder.insert{name = "coal", count = 2}; local b = surface.create_entity{name = "small-biter", position = {ccx + 10, ccy + 9}, force = "enemy"}; b.die()
+/c local surface = game.player.surface; local base = game.player.position; local ccx = math.floor(base.x / 32) * 32; local ccy = math.floor((base.y + 32) / 32) * 32; local ins_a = surface.create_entity{name = "inserter", position = {ccx + 10, ccy + 10}, direction = defines.direction.east, force = "player"}; local chest_a = surface.create_entity{name = "iron-chest", position = {ccx + 11, ccy + 10}, force = "player"}; chest_a.get_inventory(defines.inventory.chest).insert{name = "iron-plate", count = 40}; local ins_b = surface.create_entity{name = "inserter", position = {ccx + 10, ccy + 12}, direction = defines.direction.south, force = "player"}; local chest_b = surface.create_entity{name = "iron-chest", position = {ccx + 10, ccy + 13}, force = "player"}; chest_b.get_inventory(defines.inventory.chest).insert{name = "copper-plate", count = 40}; local src = surface.create_entity{name = "iron-chest", position = {ccx + 16, ccy + 10}, force = "player"}; src.get_inventory(defines.inventory.chest).insert{name = "iron-plate", count = 20}; local dst = surface.create_entity{name = "iron-chest", position = {ccx + 18, ccy + 10}, force = "player"}; local feeder = surface.create_entity{name = "burner-inserter", position = {ccx + 17, ccy + 10}, direction = defines.direction.east, force = "player"}; feeder.insert{name = "coal", count = 2}; local b = surface.create_entity{name = "small-biter", position = {ccx + 10, ccy + 9}, force = "enemy"}; b.die()
 ```
-Wait ~10 seconds - a freshly placed burner-inserter has to ignite its
-fuel before it can start moving at all, on top of the swing itself, so
-this needs longer than the "couple of seconds" everything else here gets.
+Wait until the cyan outline disappears - a freshly placed burner-inserter
+needs to ignite its fuel and complete a swing first, which the zone's
+normal timeout comfortably covers.
 
 ## 6. Distant logistics network (roboport)
 
 Tests: a roboport network reachable from a zone's chunk but not
 physically standing in it - the one-time network roster plus ongoing
-content sampling for providers/requesters. Anchored 2 chunks (64 tiles)
+content sampling for providers/requesters. Anchored 1 chunk (32 tiles)
 from the player, same reasoning as step 5.
 
 ```
-/c local surface = game.player.surface; local base = game.player.position; local ccx = math.floor(base.x / 32) * 32; local ccy = math.floor((base.y - 64) / 32) * 32; local rp = surface.create_entity{name = "roboport", position = {ccx + 31, ccy + 16}, force = "player"}; rp.insert{name = "construction-robot", count = 2}; local provider = surface.create_entity{name = "passive-provider-chest", position = {ccx + 34, ccy + 16}, force = "player"}; provider.get_inventory(defines.inventory.chest).insert{name = "iron-plate", count = 20}; local requester = surface.create_entity{name = "requester-chest", position = {ccx + 37, ccy + 16}, force = "player"}; local b = surface.create_entity{name = "small-biter", position = {ccx + 31, ccy + 15}, force = "enemy"}; b.die()
+/c local surface = game.player.surface; local base = game.player.position; local ccx = math.floor(base.x / 32) * 32; local ccy = math.floor((base.y - 32) / 32) * 32; local rp = surface.create_entity{name = "roboport", position = {ccx + 31, ccy + 16}, force = "player"}; rp.insert{name = "construction-robot", count = 2}; local provider = surface.create_entity{name = "passive-provider-chest", position = {ccx + 34, ccy + 16}, force = "player"}; provider.get_inventory(defines.inventory.chest).insert{name = "iron-plate", count = 20}; local requester = surface.create_entity{name = "requester-chest", position = {ccx + 37, ccy + 16}, force = "player"}; local b = surface.create_entity{name = "small-biter", position = {ccx + 31, ccy + 15}, force = "enemy"}; b.die()
 ```
-Wait a couple of seconds.
+Wait until the cyan outline disappears.
 
 ## 7. Distant fluid chain
 
@@ -146,13 +152,13 @@ reads a whole connected segment in one call however far it physically
 runs, even while cropped. The storage tank is a 3x3 building whose fluid
 ports sit only on its corner tiles, not its center row, so it's placed
 one tile off the pipe run's y-coordinate - lining a corner port up with
-the pipe instead of the tank's unconnected center. Anchored 2 chunks (64
+the pipe instead of the tank's unconnected center. Anchored 1 chunk (32
 tiles) from the player via `ccx`/`ccy`, same reasoning as steps 5-6.
 
 ```
-/c local surface = game.player.surface; local base = game.player.position; local ccx = math.floor(base.x / 32) * 32; local ccy = math.floor((base.y - 64) / 32) * 32; local pipe; for i = 0, 35 do pipe = surface.create_entity{name = "pipe", position = {ccx + i, ccy + 16}, force = "player"} or pipe end; local tank = surface.create_entity{name = "storage-tank", position = {ccx - 2, ccy + 15}, force = "player"}; tank.insert_fluid{name = "water", amount = 300}; local b = surface.create_entity{name = "small-biter", position = {ccx, ccy + 15}, force = "enemy"}; b.die()
+/c local surface = game.player.surface; local base = game.player.position; local ccx = math.floor(base.x / 32) * 32; local ccy = math.floor((base.y - 32) / 32) * 32; local pipe; for i = 0, 35 do pipe = surface.create_entity{name = "pipe", position = {ccx + i, ccy + 16}, force = "player"} or pipe end; local tank = surface.create_entity{name = "storage-tank", position = {ccx - 2, ccy + 15}, force = "player"}; tank.insert_fluid{name = "water", amount = 300}; local b = surface.create_entity{name = "small-biter", position = {ccx, ccy + 15}, force = "enemy"}; b.die()
 ```
-Wait a couple of seconds.
+Wait until the cyan outline disappears.
 
 ## 8. Full recording mode
 
@@ -168,30 +174,33 @@ matching how you'd actually use this mode in practice.
 ## 9. Ground items
 
 Tests: a dropped item stack being tracked (`ground_item_created`, ongoing
-`inventory_delta` with `owner_kind = ground_item`), a partial pickup, and
-its full removal (`ground_item_removed`). Placed here (simplest event
-this checklist produces) rather than needing its own zone-opening kill,
-since full recording mode already covers the whole surface from step 8
-on.
+`inventory_delta` with `owner_kind = ground_item`), and its removal
+(`ground_item_removed`) via two different causes. Placed here (simplest
+event this checklist produces) rather than needing its own zone-opening
+kill, since full recording mode already covers the whole surface from
+step 8 on.
 
 ```
 /c game.player.insert{name = "iron-plate", count = 10}
 ```
 **Action:** Open your inventory, pick up the iron-plate stack (click it
-so it's on your cursor), then press **Z** once or twice to drop a couple
-of plates on the ground in front of you, then close your inventory.
-Confirm you actually see the plates land before continuing - this is the
-one step driven entirely by a manual UI action, not a script.
+so it's on your cursor), then press **Z** several times to drop the
+plates on the ground in front of you, then close your inventory. Confirm
+you actually see the plates land before continuing - this is the one
+step driven entirely by a manual UI action, not a script. A ground item
+is always exactly one unit (dropping a stack scatters it into that many
+separate single-item piles, never one multi-count pile), so you should
+see one pile per plate, not a single stack icon.
 
-**Action:** Hover over one of the dropped piles and hold **F** to pick up
-half of it. This exercises a *partial* `inventory_delta` for the same
-`ground_item` owner (the pile shrinking, not just disappearing) before
-the command below removes what's left - also generally useful for
-confirming per-item inventory tracking, not just this one event type.
+**Action:** Walk over (or hover and press **F** on) a few of the piles to
+pick them up by hand - confirms `ground_item_removed` fires for a manual
+pickup, not just the scripted `destroy()` below, both routing through the
+same `register_on_object_destroyed` mechanism.
 
 ```
 /c local items = game.player.surface.find_entities_filtered{type = "item-entity", position = game.player.position, radius = 10}; for _, i in ipairs(items) do i.destroy() end
 ```
+Removes whichever piles you didn't already pick up by hand.
 
 ## 10. Robot cargo
 
@@ -203,8 +212,12 @@ Tests: a bot's carried inventory being tracked.
 
 ## 11. Fluids
 
-Tests: a fluid-holding entity appearing and its contents being tracked -
-the simpler, near-field counterpart to step 7's distant chain.
+Tests: a fluid entity's contents being tracked, deliberately as simple as
+possible. Worth having alongside step 7's more complex version precisely
+because it's simple - if step 7 ever fails, this tells you immediately
+whether the fluid API itself broke or just the distant-chain logic on
+top of it. Sits here rather than earlier only because full recording mode
+already covers it without needing its own zone-opening kill.
 
 ```
 /c local tank = game.player.surface.create_entity{name = "storage-tank", position = {game.player.position.x - 3, game.player.position.y}, force = "player"}; tank.insert_fluid{name = "water", amount = 500}
@@ -217,21 +230,20 @@ destroyed, and fire creation/fade-out (`effect_created`/`effect_expired`)
 from the flamethrower's flame patch. Fully scripted, no action required -
 turrets and their one-hit-point targets are placed away from the player
 so nothing blocks your movement, and each turret only ever fights its own
-target. `ft_target` is boxed in on three sides 10 tiles from the
-flamethrower turret (the open side facing the turret) so it can't wander
-out of the flame stream's range before taking a hit, the way a loose
-target that far away could.
+target. `ft_target` is fully boxed in on all four sides 10 tiles from the
+flamethrower turret - the box only blocks the biter's own movement, not
+the flame itself, so it can't wander out of the stream's range before
+taking a hit. This biter exists purely to take flame damage and die -
+turret-taking-damage variety already comes from the 1-health `doomed`
+turret below.
 
 ```
-/c local p = game.player.position; local surface = game.player.surface; local gt = surface.create_entity{name="gun-turret", position={p.x + 10, p.y}, force="player"}; gt.get_inventory(defines.inventory.turret_ammo).insert{name="firearm-magazine", count=10}; local gt_target = surface.create_entity{name="small-biter", position={p.x + 16, p.y}, force="enemy"}; gt_target.health = 1; local ft = surface.create_entity{name="flamethrower-turret", position={p.x + 50, p.y}, force="player"}; ft.insert_fluid{name="crude-oil", amount=100}; local ft_target = surface.create_entity{name="small-biter", position={p.x + 50, p.y - 10}, force="enemy"}; ft_target.health = 1; for dx = -1, 1 do for dy = -1, 1 do if math.max(math.abs(dx), math.abs(dy)) == 1 and not (dx == 0 and dy == 1) then surface.create_entity{name = "stone-wall", position = {p.x + 50 + dx, p.y - 10 + dy}, force = "player"} end end end; local doomed = surface.create_entity{name="gun-turret", position={p.x + 90, p.y}, force="player"}; doomed.health = 1; surface.create_entity{name="behemoth-biter", position={p.x + 94, p.y}, force="enemy"}
+/c local p = game.player.position; local surface = game.player.surface; local gt = surface.create_entity{name="gun-turret", position={p.x + 10, p.y}, force="player"}; gt.get_inventory(defines.inventory.turret_ammo).insert{name="firearm-magazine", count=10}; local gt_target = surface.create_entity{name="small-biter", position={p.x + 16, p.y}, force="enemy"}; gt_target.health = 1; local ft = surface.create_entity{name="flamethrower-turret", position={p.x + 50, p.y}, force="player"}; ft.insert_fluid{name="crude-oil", amount=100}; local ft_target = surface.create_entity{name="small-biter", position={p.x + 50, p.y - 10}, force="enemy"}; ft_target.health = 1; for dx = -1, 1 do for dy = -1, 1 do if math.max(math.abs(dx), math.abs(dy)) == 1 then surface.create_entity{name = "stone-wall", position = {p.x + 50 + dx, p.y - 10 + dy}, force = "player"} end end end; local doomed = surface.create_entity{name="gun-turret", position={p.x + 90, p.y}, force="player"}; doomed.health = 1; surface.create_entity{name="behemoth-biter", position={p.x + 94, p.y}, force="enemy"}
 ```
 Wait ~10 seconds for the kills/destruction, then ~10 more for the flame
 patch to fade.
 
-**Cleanup:** the behemoth-biter has no reason to die once it's destroyed
-the weak turret, and both of *your* turrets are still live and armed -
-the flamethrower especially will happily fire on whatever gets spawned
-near it in a later step. Clear both:
+**Cleanup:** clear the behemoth-biter and your own turrets:
 ```
 /c for _, e in ipairs(game.player.surface.find_entities_filtered{force = "enemy"}) do e.destroy() end; for _, e in ipairs(game.player.surface.find_entities_filtered{force = "player", type = {"ammo-turret", "electric-turret", "fluid-turret"}}) do e.destroy() end
 ```
@@ -245,10 +257,10 @@ Fully scripted, no action required.
 ```
 /c local p = game.player.position; local surface = game.player.surface; local weak_tank = surface.create_entity{name="tank", position={p.x + 40, p.y - 40}, force="player"}; weak_tank.health = 1; surface.create_entity{name="small-biter", position={p.x + 42, p.y - 40}, force="enemy"}; surface.create_entity{name="car", position={p.x + 46, p.y - 40}, force="player"}
 ```
-Wait ~5 seconds.
+Wait ~15 seconds - the tank dies to the very first hit, but a small biter
+still takes a while to path over and land it.
 
-**Cleanup:** the biter survives after destroying the one-hit-point tank -
-clear it:
+**Cleanup:** clear the biter:
 ```
 /c for _, e in ipairs(game.player.surface.find_entities_filtered{force = "enemy"}) do e.destroy() end
 ```
@@ -256,20 +268,29 @@ clear it:
 ## 14. Kill classification: worm, spawner, and spitter acid
 
 Tests: `hostile_kind` classification for worm turrets and spawners
-(biter classification is exercised elsewhere), plus a real spitter fight
-for acid damage and the resulting fire/acid patch. Combined into one step
-so the worm's and the spitter's acid streams are both live at once - the
-automated check looks for two distinct acid sources fading, not just
-that some fire-typed effect existed at all.
+(biter classification is exercised elsewhere), plus real acid damage and
+the resulting fire/acid patches from both a worm and a spitter. Combined
+into one step so both acid streams are live at once - the automated check
+looks for two distinct acid sources fading, not just that some fire-typed
+effect existed at all. Unlike the spawner (which never acts, so an
+instant kill costs nothing), the worm needs to survive long enough to
+actually spit at you first - it's given 50 health rather than the usual
+1, an approximation that may need adjusting if it turns out too tanky or
+too fragile in practice. The spitter is left at full health for the same
+reason, and positioned to the left with the other two rather than off on
+its own.
 
 ```
-/c local p = game.player.position; local surface = game.player.surface; local spawner = surface.create_entity{name="biter-spawner", position={p.x - 40, p.y}, force="enemy"}; spawner.health = 1; local worm = surface.create_entity{name="medium-worm-turret", position={p.x - 46, p.y}, force="enemy"}; worm.health = 1; surface.create_entity{name="small-spitter", position={p.x + 12, p.y}, force="enemy"}
+/c local p = game.player.position; local surface = game.player.surface; local spawner = surface.create_entity{name="biter-spawner", position={p.x - 40, p.y}, force="enemy"}; spawner.health = 1; local worm = surface.create_entity{name="medium-worm-turret", position={p.x - 46, p.y}, force="enemy"}; worm.health = 50; surface.create_entity{name="small-spitter", position={p.x - 12, p.y}, force="enemy"}
 ```
-**Action:** Land one hit each on the spawner and the worm turret - both
-are isolated 1-HP targets, nothing else nearby to accidentally kill.
-Then walk over and fight the spitter normally, letting it land a couple
-of acid hits on you before it dies. Wait ~10 seconds after the spitter
-dies so both the worm's and the spitter's acid patches have time to fade.
+**Action:** Let the worm land at least one acid hit on you before you
+kill it - don't finish it off on your first swing. Then walk over to the
+spitter and let it land at least one acid hit on you too before killing
+it. You need damage from **both** acid types before either attacker dies,
+or the acid-diversity check below has nothing to compare - killing on
+sight defeats the point. Once you've taken both hits, kill the spawner,
+worm, and spitter (any order). Wait ~20 seconds after the last kill for
+both acid patches to fully fade.
 
 ## 15. Walls and gates: damage and destruction
 
@@ -295,8 +316,7 @@ required.
 ```
 Wait ~10 seconds.
 
-**Cleanup:** both biters are still alive (and may still be chewing on the
-unarmed bait turrets) - clear them:
+**Cleanup:** clear both biters:
 ```
 /c for _, e in ipairs(game.player.surface.find_entities_filtered{force = "enemy"}) do e.destroy() end
 ```
@@ -318,8 +338,11 @@ one here too.)
 /c local p = game.player.position; local surface = game.player.surface; local tank = surface.create_entity{name="tank", position={p.x, p.y + 3}, force=game.player.force}; tank.insert{name="solid-fuel", count=20}; tank.insert{name="cannon-shell", count=10}; local shoot_target = surface.create_entity{name="small-biter", position={p.x - 10, p.y + 5}, force="enemy"}; shoot_target.health = 1; local run_over_target = surface.create_entity{name="small-biter", position={p.x + 10, p.y + 5}, force="enemy"}; run_over_target.health = 1
 ```
 **Action:** Get in the tank (walk up to it and press **Enter**). From
-inside, shoot the biter on your **left/west** (`shoot_target`), then
-drive over the biter on your **right/east** (`run_over_target`).
+inside, shoot the biter on your **left/west** (`shoot_target`) with the
+cannon, then drive the tank directly over the biter on your **right/east**
+(`run_over_target`) - a real collision, not a near miss. Both credits (a
+fired-projectile hit and a bare collision) are required for the check
+below to pass, so don't skip the run-over.
 
 ## 17. Spidertron autopilot
 
@@ -330,6 +353,11 @@ player-controlled. Fully scripted, no action required.
 /c local p = game.player.position; local surface = game.player.surface; local st = surface.create_entity{name="spidertron", position={p.x + 2, p.y}, force = game.player.force}; st.insert{name="rocket", count=20}; local target = surface.create_entity{name="small-biter", position={p.x + 30, p.y}, force="enemy"}; target.health = 1; st.autopilot_destination = {target.position.x, target.position.y}
 ```
 Wait ~5 seconds.
+
+**Cleanup:** clear the spidertron and target:
+```
+/c for _, e in ipairs(game.player.surface.find_entities_filtered{type = "spider-vehicle", force = "player"}) do e.destroy() end; for _, e in ipairs(game.player.surface.find_entities_filtered{force = "enemy"}) do e.destroy() end
+```
 
 ## 18. Player death, respawn, and corpse lifecycle
 
@@ -344,14 +372,13 @@ first), and removal (`corpse_expired`).
 ```
 /c local c = game.player.surface.find_entities_filtered{type = "character-corpse"}[1]; if c then c.get_inventory(defines.inventory.character_corpse).remove{name = "iron-plate", count = 5} end
 ```
-Wait a couple of seconds.
+Wait a moment - just long enough for the partial removal to get scanned
+as its own `inventory_delta` before the next command clears the rest.
 ```
 /c local c = game.player.surface.find_entities_filtered{type = "character-corpse"}[1]; if c then c.get_inventory(defines.inventory.character_corpse).clear() end
 ```
 
-**Cleanup:** the biter that killed you is still alive near your death
-spot (you've respawned elsewhere, so it's out of sight, not gone) -
-clear it:
+**Cleanup:** clear the biter:
 ```
 /c for _, e in ipairs(game.player.surface.find_entities_filtered{force = "enemy"}) do e.destroy() end
 ```
@@ -364,8 +391,7 @@ Tests: biters forming up into a group is recorded as `unit_group_created`.
 /c local g = game.player.surface.create_unit_group{position = {game.player.position.x + 10, game.player.position.y}, force = "enemy"}; local u1 = game.player.surface.create_entity{name = "small-biter", position = {game.player.position.x + 10, game.player.position.y}, force = "enemy"}; local u2 = game.player.surface.create_entity{name = "small-biter", position = {game.player.position.x + 11, game.player.position.y}, force = "enemy"}; g.add_member(u1); g.add_member(u2)
 ```
 
-**Cleanup:** the group and its members just sit there gathering forever -
-clear them:
+**Cleanup:** clear the group:
 ```
 /c for _, e in ipairs(game.player.surface.find_entities_filtered{force = "enemy"}) do e.destroy() end
 ```

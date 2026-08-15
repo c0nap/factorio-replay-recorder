@@ -41,11 +41,19 @@ LOG_MARKER = "[replay-recorder-diagnostics]"
 # key into this one's capture.
 UNIT = r"(?:ns|us|µs|μs|ms|s)"
 DURATION = rf"Duration:\s*[\d.]+\s*{UNIT}"
+# buffer_size/backfill_remaining are plain integers, not LuaProfiler
+# durations - added after a round where "is the lag fix even doing
+# anything" couldn't be answered from timings alone, since a save can
+# silently keep an OLDER stored setting value across a mod update.
+# Optional (the `?` groups) so a log from before they existed still
+# parses instead of being counted as malformed.
 FIELD_RE = re.compile(
     rf"tick=(?P<tick>\d+)"
     rf"\s+tick_time=(?P<tick_time>{DURATION})"
     rf"\s+scan_time=(?P<scan_time>{DURATION})"
     rf"(?:\s+write_time=(?P<write_time>{DURATION}))?"
+    rf"(?:\s+buffer_size=(?P<buffer_size>\d+))?"
+    rf"(?:\s+backfill_remaining=(?P<backfill_remaining>\d+))?"
 )
 DURATION_RE = re.compile(rf"^Duration:\s*([\d.]+)\s*({UNIT})$")
 DURATION_UNIT_TO_MS = {
@@ -88,13 +96,14 @@ def _parse_duration_ms(text):
 
 def load_samples(path):
     """Reads factorio-current.log, returning (samples, malformed_count).
-    A sample is a dict with tick (int) and tick_time/scan_time/write_time
-    (floats, milliseconds; write_time only on ticks that flushed). A line
-    containing the marker that doesn't match the expected field shape is
-    counted as malformed rather than silently skipped - Factorio's own log
-    preamble format isn't something this script controls, so a real format
-    change elsewhere is exactly the kind of thing worth surfacing instead
-    of hiding."""
+    A sample is a dict with tick (int), tick_time/scan_time/write_time
+    (floats, milliseconds; write_time only on ticks that flushed), and
+    buffer_size/backfill_remaining (ints, None on a log from before these
+    existed). A line containing the marker that doesn't match the expected
+    field shape is counted as malformed rather than silently skipped -
+    Factorio's own log preamble format isn't something this script
+    controls, so a real format change elsewhere is exactly the kind of
+    thing worth surfacing instead of hiding."""
     samples = []
     malformed = 0
 
@@ -117,11 +126,16 @@ def load_samples(path):
                 malformed += 1
                 continue
 
+            buffer_size_group = match.group("buffer_size")
+            backfill_remaining_group = match.group("backfill_remaining")
+
             samples.append({
                 "tick": int(match.group("tick")),
                 "tick_time": tick_time,
                 "scan_time": scan_time,
                 "write_time": write_time,
+                "buffer_size": int(buffer_size_group) if buffer_size_group else None,
+                "backfill_remaining": int(backfill_remaining_group) if backfill_remaining_group else None,
             })
 
     return samples, malformed
@@ -198,6 +212,21 @@ def find_slow_streaks(samples, field, threshold_ms):
     return sorted(streaks, key=lambda st: st["total_ms"], reverse=True)
 
 
+def _context_suffix(sample):
+    """" (buffer_size=N, backfill_remaining=N)" for a slowest-tick line, or
+    "" on a log from before those fields existed - lets a slow tick be
+    read alongside what the buffer/backfill queue actually looked like at
+    that moment, e.g. confirming whether Config.max_buffered_events()'s
+    ACTUAL in-effect value (which an existing save can keep pinned to an
+    older default across a mod update) matches what's expected."""
+    parts = []
+    if sample.get("buffer_size") is not None:
+        parts.append(f"buffer_size={sample['buffer_size']}")
+    if sample.get("backfill_remaining") is not None:
+        parts.append(f"backfill_remaining={sample['backfill_remaining']}")
+    return f" ({', '.join(parts)})" if parts else ""
+
+
 def print_report(samples, malformed, top_n, streak_threshold_ms):
     print("=" * 70)
     print("Factorio Replay Recorder - performance diagnostics summary")
@@ -241,6 +270,27 @@ def print_report(samples, malformed, top_n, streak_threshold_ms):
             f"mean={stats['mean']:.3f}  p95={stats['p95']:.3f}  max={stats['max']:.3f}"
         )
 
+    backfill_samples = [s for s in samples if s["backfill_remaining"] is not None]
+    if backfill_samples:
+        draining = [s for s in backfill_samples if s["backfill_remaining"] > 0]
+        max_buffer = max((s["buffer_size"] for s in backfill_samples if s["buffer_size"] is not None), default=None)
+        print("\nBackfill queue:")
+        if draining:
+            span_ticks = draining[-1]["tick"] - draining[0]["tick"] + 1
+            print(
+                f"  draining across ticks {draining[0]['tick']}-{draining[-1]['tick']} "
+                f"(~{span_ticks / 60:.1f}s @ 60 UPS), peak queue depth "
+                f"{max(s['backfill_remaining'] for s in draining)} chunk(s)"
+            )
+        else:
+            print("  never non-empty in this log (full recording mode wasn't turned on with")
+            print("  already-generated chunks pending, or diagnostics started after backfill finished)")
+        if max_buffer is not None:
+            print(f"  peak buffer_size seen: {max_buffer} event(s) - compare against the")
+            print("  rrec-max-buffered-events setting actually in effect for this save (an")
+            print("  existing save can keep an older stored value across a mod update, even")
+            print("  if this mod's own default changed)")
+
     print(f"\nSlowest {top_n} tick(s) by field (tick number: value ms):")
     for field, label in labels.items():
         if not field_stats.get(field):
@@ -248,7 +298,7 @@ def print_report(samples, malformed, top_n, streak_threshold_ms):
         worst = top_slowest(samples, field, top_n)
         print(f"  {label}:")
         for s in worst:
-            print(f"    tick {s['tick']}: {s[field]:.3f}ms")
+            print(f"    tick {s['tick']}: {s[field]:.3f}ms{_context_suffix(s)}")
 
     print("\nSlow streaks (consecutive ticks at/above the threshold below -")
     print("this is what actually reads as a stutter, not just one freak tick):")

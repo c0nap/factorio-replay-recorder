@@ -40,9 +40,9 @@ All settings live under *Settings > Mod Settings > Map* and can be changed witho
 | Chain near hops | 5 | Belt/inserter chain hops within this distance of a zone get exact per-entity tracking; beyond it, they're rolled up into a compact summary instead. |
 | Chain max hops | 30 | Absolute limit on how far a belt/inserter chain walk follows outward from a zone, near or far. |
 | Inserter search radius | 3 tiles | How far to search around a chest for inserters that service it (chests have no "what's connected to me" query of their own). The radius only narrows the search - matches are confirmed via each candidate's exact `pickup_target`/`drop_target`, so a too-large radius costs a little performance, not correctness. |
-| Chunk backfill per tick | 3 chunks | When full recording mode turns on with already-generated chunks in the save, how many of them get scanned and captured per tick while catching up. Lower spreads the catch-up out over more ticks (smoother, slower to finish); higher finishes faster at the cost of more work per tick. See [Full Recording Mode](#full-recording-mode-performance) below. |
+| Chunk backfill per tick | 2 chunks | When full recording mode turns on with already-generated chunks in the save, how many of them get scanned and captured per tick while catching up. Lower spreads the catch-up out over more ticks (smoother, slower to finish); higher finishes faster at the cost of more work per tick. See [Full Recording Mode](#full-recording-mode-performance) below. |
 | Flush interval | 1 second | How often the buffered event queue gets serialized and written to `replay.json`, at most - see "Max buffered events" below for the other trigger. Larger values batch more events into fewer, bigger writes; smaller values write more often in smaller chunks. |
-| Max buffered events | 3 events | Caps how many buffered events a single flush serializes+writes, and triggers an early flush - before the flush interval above is even up - once the buffer grows past this size. See [Full Recording Mode](#full-recording-mode-performance) below. |
+| Max buffered events | 2 events | Caps how many buffered events a single flush serializes+writes, and triggers an early flush - before the flush interval above is even up - once the buffer grows past this size. See [Full Recording Mode](#full-recording-mode-performance) below. |
 | Full recording mode | Off | Disables cropping and records every generated chunk continuously. **Produces enormous files** (potentially gigabytes per hour) - meant for short recordings or debugging, not routine play. |
 | Diagnostics enabled | Off | Writes per-tick timing to Factorio's own log file, not `replay.json` (see [Performance diagnostics](#performance-diagnostics) below). |
 | Battlefield marker enabled | Off | Draws a cyan line around the exterior perimeter of whatever chunks are currently recording (see [Battlefield marker](#battlefield-marker) below). A no-op under full recording mode. |
@@ -72,18 +72,35 @@ unexplored territory) are still captured immediately, one at a time, as
 they generate.
 
 Even with that in place, a later diagnostics run still showed single
-ticks over 450ms during the backfill window: `control.lua` was flushing
-*after* that same tick's own backfill scan, so a heavy
-`dump_static_chunk_data` pass and the write it triggered were stacking
-into one frame instead of landing in separate ones. `control.lua`'s
-`on_tick` now checks the early-flush condition *before* that tick's own
-backfill/scan work runs, against whatever was left over from earlier
-ticks - so a tick whose scan pushes the buffer over the threshold pays
-for the resulting write on the *next* tick, not the same one. Combined
-with lowering both settings above further (backfill per tick and max
-buffered events were each dropped again from their previous defaults),
-this keeps individual full-recording ticks from standing out the way a
-single 450ms+ tick did before.
+ticks over 450ms during the backfill window - an attempted fix that just
+reordered the flush check to run *before* that tick's own backfill scan
+turned out not to help at all, and a run afterward confirmed it: the
+worst ticks still showed a large scan time AND a large write time
+together, not one or the other. The reasoning behind that fix was wrong -
+Factorio runs `on_tick` as one atomic, uninterruptible unit of work per
+game tick, so anything that happens inside it lands in the same single
+stutter regardless of what order it runs in.
+
+The actual fix is to never let a backfill scan and a flush share a tick
+at all. While the backfill queue has anything left in it, `control.lua`'s
+`on_tick` now alternates: even ticks drain the backfill queue and skip
+the size-triggered flush check; odd ticks skip the backfill queue and run
+the flush check instead. This halves the backfill's drain rate while it's
+actively running, in exchange for genuinely isolating the two heaviest
+operations onto separate frames. Combined with lowering both settings
+above again, individual full-recording ticks should no longer stand out
+the way a single 450ms+ tick did before - though because a save can keep
+an OLDER stored setting value even after a mod update changes the
+default, see [Performance diagnostics](#performance-diagnostics) below
+for how to confirm what's actually in effect for a given save rather than
+assuming the new defaults took hold.
+
+The fixed-interval flush is also staggered half a period away from the
+distant-sample interval now: both commonly run on the same cadence (the
+testing checklist sets both to 1 second), so without the offset they'd
+land on the same tick every time, compounding two separate periodic
+costs instead of spreading them out - visible in real data as repeated
+~15-30ms streaks outside the backfill burst itself.
 
 ### Performance diagnostics
 
@@ -93,7 +110,13 @@ Turning on "Diagnostics enabled" measures three timings every tick via
 `CombatZones`/`Tracker`/`Logistics`/`ItemChains`/`FluidChains`), and
 `write_time` (`Exporter.flush()` alone, present only on ticks where a
 flush actually happened) - answering "is a stall scan-bound or IO-bound"
-with real numbers instead of a guess.
+with real numbers instead of a guess. Each line also carries `buffer_size`
+(how many events are currently queued) and `backfill_remaining` (how many
+chunks are left in the full-recording backfill queue), added specifically
+so a real run can confirm whether "Chunk backfill per tick"/"Max buffered
+events" are actually the values in effect for that save - not just what
+this mod's settings.lua defaults to, which an existing save can silently
+override with an older stored value.
 
 These do **not** go into `replay.json`. `LuaProfiler` doesn't expose raw
 time values to Lua at all - confirmed in the real API docs, not a bug on
@@ -109,12 +132,16 @@ down:
 ```
 python3 tools/inspect_logs.py
 ```
-Beyond the min/p50/mean/p95/max summary per field, it also reports the
-slowest N individual ticks per field (`--top-n`, default 10) and any
-"slow streaks" - runs of consecutive ticks that were each at or above a
-threshold (their field's own p95 by default, or `--slow-threshold-ms` to
-set one explicitly). A summary stat alone can't tell a single freak spike
-apart from many ticks in a row each being a little slow - which is what
+Beyond the min/p50/mean/p95/max summary per field, it also reports:
+a dedicated backfill-queue summary (how long it took to drain, its peak
+depth, and the peak buffer size seen - the numbers to check first if a
+fix "doesn't seem to be doing anything"); the slowest N individual ticks
+per field (`--top-n`, default 10), each annotated with that tick's
+`buffer_size`/`backfill_remaining` for context; and any "slow streaks" -
+runs of consecutive ticks that were each at or above a threshold (their
+field's own p95 by default, or `--slow-threshold-ms` to set one
+explicitly). A summary stat alone can't tell a single freak spike apart
+from many ticks in a row each being a little slow - which is what
 actually reads as a stutter to a player - so the streak report exists
 specifically to identify *that* pattern instead of just describing the
 distribution.
