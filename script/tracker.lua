@@ -294,10 +294,29 @@ function Tracker.on_trigger_created_entity(event)
     local entity = event.entity
     if not entity or not entity.valid then return end
 
-    -- CONFIRMED (PR #13/#14 probes): a flamethrower's flame patch and a
-    -- spitter/worm's acid patch are both entity.type == "fire" on real
-    -- 2.0.76 data, and data-updates.lua's trigger_created_entity flag is
-    -- what makes this event fire for them at all.
+    -- INVESTIGATING (PR #15): unconditional, not gated on entity.type -
+    -- effect_created has shown ONLY "flamethrower-turret" as a source
+    -- across every real checklist run so far, even ones with confirmed
+    -- acid damage landing. If a spitter/worm's acid attack creates SOME
+    -- entity via this event (even one whose type isn't "fire"), this
+    -- catches it; if it never fires for acid at all, this stays silent
+    -- for it and data-updates.lua's stream-action probe is the next
+    -- place to look. Remove once resolved.
+    storage.trigger_entity_probe_seen = storage.trigger_entity_probe_seen or {}
+    local probe_key = entity.name .. "/" .. entity.type
+    if not storage.trigger_entity_probe_seen[probe_key] then
+        storage.trigger_entity_probe_seen[probe_key] = true
+        local source_for_probe = event.source
+        log("[replay-recorder-probe] on_trigger_created_entity: name=" .. entity.name .. " type=" .. entity.type
+            .. " source=" .. ((source_for_probe and source_for_probe.valid) and source_for_probe.name or "nil"))
+    end
+
+    -- CONFIRMED (PR #13/#14 probes) for the flamethrower's flame patch:
+    -- entity.type == "fire" on real 2.0.76 data. NOT independently
+    -- confirmed for a spitter/worm's acid - see the investigation note in
+    -- data-updates.lua, which is where that's being chased down now.
+    -- Kept as `~= "fire"` rather than narrowing further since that's
+    -- still the only confirmed shape either patch type could take.
     if entity.type ~= "fire" then return end
 
     local in_zone = CombatZones.notify_and_check(entity.surface, entity.position)
@@ -349,10 +368,49 @@ function Tracker.on_entity_damaged(event)
     local in_zone = CombatZones.notify_and_check(entity.surface, entity.position)
     if not (in_zone or Config.full_recording_mode()) then return end
 
-    -- `cause` is who's responsible (the character/turret/biter that pulled
-    -- the trigger); `source` is what's literally dealing the damage right
-    -- now (the projectile/flame/sticker/laser beam it fired). Keeping both
-    -- gives a viewer the full chain instead of just "something hit this".
+    -- INVESTIGATING (PR #15): the checklist's vehicle shot-vs-run-over
+    -- check has failed two different ways across two real runs (missing
+    -- run-over, then missing shot) - inconsistent with a simple execution
+    -- gap. `event.source` below (used as dealt_by) was never actually
+    -- confirmed against the real on_entity_damaged event fields, only
+    -- assumed - the comment that used to be here asserted a `cause`/
+    -- `source` split as if it were confirmed API. This dumps every
+    -- candidate field once per distinct (target unit_number, cause name)
+    -- pair whenever a car/spider-vehicle is the cause, so the next real
+    -- vehicle-combat step settles what these fields actually are instead
+    -- of guessing again. Remove once resolved.
+    if event.cause and event.cause.valid and (event.cause.type == "car" or event.cause.type == "spider-vehicle") then
+        storage.vehicle_damage_probe_seen = storage.vehicle_damage_probe_seen or {}
+        local probe_key = tostring(entity.unit_number) .. "/" .. event.cause.name
+        if not storage.vehicle_damage_probe_seen[probe_key] then
+            storage.vehicle_damage_probe_seen[probe_key] = true
+            local function safe_name(obj)
+                local ok, v = pcall(function() return obj and obj.valid and obj.name or nil end)
+                if not ok then return "ERROR(" .. tostring(v) .. ")" end
+                return v or "nil"
+            end
+            local function safe_field(fn)
+                local ok, v = pcall(fn)
+                if not ok then return "ERROR(" .. tostring(v) .. ")" end
+                if v == nil then return "nil" end
+                return tostring(v)
+            end
+            log("[replay-recorder-probe] on_entity_damaged (vehicle cause): target=" .. entity.name
+                .. " cause=" .. safe_name(event.cause)
+                .. " source=" .. safe_name(event.source)
+                .. " force=" .. safe_field(function() return event.force and event.force.name end)
+                .. " damage_type=" .. safe_field(function() return event.damage_type and event.damage_type.name end)
+                .. " original_damage_amount=" .. safe_field(function() return event.original_damage_amount end)
+                .. " final_damage_amount=" .. safe_field(function() return event.final_damage_amount end)
+                .. " final_health=" .. safe_field(function() return event.final_health end))
+        end
+    end
+
+    -- `cause` is assumed to be who's responsible (the character/turret/
+    -- biter/vehicle that pulled the trigger) and `source` the literal
+    -- thing dealing the damage right now (the projectile/flame/sticker it
+    -- fired) - NOT independently confirmed against the real event fields
+    -- for this specific event, see the probe above.
     Exporter.log_event(game.tick, "damage_event", {
         target = entity.name,
         target_type = entity.type,
@@ -452,6 +510,40 @@ local function scan_physical_items(surface, area)
             if ent.type == "container" or ent.type == "logistic-container" then
                 TrackerEvents.log_inventory_delta("container_" .. ent.unit_number, "container", TrackerEvents.container_contents(ent))
             elseif ent.type == "inserter" then
+                -- INVESTIGATING (PR #15): inserter_hand owner_kind has
+                -- never once appeared across three real checklist runs,
+                -- despite step 5's feeder burner-inserter having a real
+                -- pickup source and drop target. Logs each inserter's
+                -- burner/fuel state once at first sight, and again the
+                -- first time its hand is ever seen holding something, so
+                -- the next real run tells us whether this is a fueling/
+                -- ignition problem or just scan-timing luck. Remove once
+                -- resolved.
+                storage.inserter_hand_probe_seen = storage.inserter_hand_probe_seen or {}
+                local probe_state = storage.inserter_hand_probe_seen[ent.unit_number]
+                if not probe_state then
+                    storage.inserter_hand_probe_seen[ent.unit_number] = "first_seen"
+                    local ok_burner, burner = pcall(function() return ent.burner end)
+                    local fuel_desc = "no_burner"
+                    if ok_burner and burner then
+                        local ok_remaining, remaining = pcall(function() return burner.remaining_burning_fuel end)
+                        local ok_inv, contents = pcall(function() return burner.inventory and burner.inventory.get_contents() end)
+                        fuel_desc = "remaining_burning_fuel=" .. (ok_remaining and tostring(remaining) or "ERROR")
+                            .. " fuel_inventory=" .. (ok_inv and serpent.line(contents) or "ERROR")
+                    elseif not ok_burner then
+                        fuel_desc = "burner_read_ERROR(" .. tostring(burner) .. ")"
+                    end
+                    log("[replay-recorder-probe] inserter first seen: name=" .. ent.name
+                        .. " unit_number=" .. ent.unit_number .. " " .. fuel_desc)
+                end
+
+                local ok_stack, held = pcall(function() return ent.held_stack end)
+                if ok_stack and held and held.valid_for_read and probe_state ~= "held_seen" then
+                    storage.inserter_hand_probe_seen[ent.unit_number] = "held_seen"
+                    log("[replay-recorder-probe] inserter hand non-empty: name=" .. ent.name
+                        .. " unit_number=" .. ent.unit_number .. " item=" .. held.name .. " count=" .. held.count)
+                end
+
                 TrackerEvents.log_inventory_delta("inserter_" .. ent.unit_number, "inserter_hand", TrackerEvents.held_stack_contents(ent))
             end
         end

@@ -303,6 +303,7 @@ def summarize(events, malformed, sample_limit, only_type):
     _summarize_owner_kinds(events)
     _summarize_scores(events)
     _summarize_kills(events)
+    _summarize_combat_diversity(events)
 
     types_to_sample = [only_type] if only_type else [t for t, _ in counts.most_common()]
     print("\nSample payloads:")
@@ -355,6 +356,45 @@ def _summarize_kills(events):
         print("\nHostile kills by kind/size:")
         for (kind, size), count in sorted(kills.items()):
             print(f"  {kind}/{size}: {count}")
+
+
+def _summarize_combat_diversity(events):
+    """Distinct-value breakdowns for the fields a few checklist checks
+    hinge on (weapon, effect source, damage dealer/dealt_by) - added
+    because "does this ever show more than one value" is exactly the
+    question those checks ask, and a single sample payload per event type
+    can't answer it. This reads data the mod is already recording; no new
+    probe or replay is needed to get it."""
+    weapons = collections.Counter()
+    for e in events:
+        if e.get("type") == "projectile_impact":
+            weapon = e.get("data", {}).get("weapon")
+            if weapon:
+                weapons[weapon] += 1
+    if weapons:
+        print("\nprojectile_impact weapons seen:")
+        for weapon, count in weapons.most_common():
+            print(f"  {weapon:<30} {count}")
+
+    effect_sources = collections.Counter()
+    for e in events:
+        if e.get("type") == "effect_created":
+            data = e.get("data", {})
+            effect_sources[(data.get("name"), data.get("source"))] += 1
+    if effect_sources:
+        print("\neffect_created (name, source) pairs seen:")
+        for (name, source), count in effect_sources.most_common():
+            print(f"  name={name!r:<20} source={source!r:<25} {count}")
+
+    damage_pairs = collections.Counter()
+    for e in events:
+        if e.get("type") == "damage_event":
+            data = e.get("data", {})
+            damage_pairs[(data.get("dealer"), data.get("dealt_by"))] += 1
+    if damage_pairs:
+        print("\ndamage_event (dealer, dealt_by) pairs seen:")
+        for (dealer, dealt_by), count in damage_pairs.most_common():
+            print(f"  dealer={dealer!r:<20} dealt_by={dealt_by!r:<25} {count}")
 
 
 def main():

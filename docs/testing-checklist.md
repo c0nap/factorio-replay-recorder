@@ -255,10 +255,15 @@ car alongside it) vehicle-type diversity for the checklist as a whole.
 Fully scripted, no action required.
 
 ```
-/c local p = game.player.position; local surface = game.player.surface; local weak_tank = surface.create_entity{name="tank", position={p.x + 40, p.y - 40}, force="player"}; weak_tank.health = 1; surface.create_entity{name="small-biter", position={p.x + 42, p.y - 40}, force="enemy"}; surface.create_entity{name="car", position={p.x + 46, p.y - 40}, force="player"}
+/c local p = game.player.position; local surface = game.player.surface; local weak_tank = surface.create_entity{name="tank", position={p.x + 40, p.y - 40}, force="player"}; weak_tank.health = 1; surface.create_entity{name="behemoth-biter", position={p.x + 42, p.y - 40}, force="enemy"}; surface.create_entity{name="car", position={p.x + 46, p.y - 40}, force="player"}
 ```
-Wait ~15 seconds - the tank dies to the very first hit, but a small biter
-still takes a while to path over and land it.
+Wait ~5 seconds. Real playtesting showed a small-biter's attacks never
+actually dropping the tank's health from 1, even after 10+ seconds of
+uninterrupted hits - most likely the "tank" vehicle prototype has enough
+built-in damage resistance to reduce a small-biter's weak attack to near
+zero (unconfirmed - flagging the hypothesis rather than asserting it).
+Upgraded to a behemoth-biter, whose attack is large enough to guarantee
+the one-hit kill regardless of the exact mechanism.
 
 **Cleanup:** clear the biter:
 ```
@@ -272,23 +277,22 @@ Tests: `hostile_kind` classification for worm turrets and spawners
 the resulting fire/acid patches from both a worm and a spitter. Combined
 into one step so both acid streams are live at once - the automated check
 looks for two distinct acid sources fading, not just that some fire-typed
-effect existed at all. Unlike the spawner (which never acts, so an
-instant kill costs nothing), the worm needs to survive long enough to
-actually spit at you first - it's given 50 health rather than the usual
-1, an approximation that may need adjusting if it turns out too tanky or
-too fragile in practice. The spitter is left at full health for the same
-reason, and positioned to the left with the other two rather than off on
-its own.
+effect existed at all. All three are 1 HP, same as everywhere else in
+this checklist - confirmed by real playtesting that even a 1-HP worm/
+spitter still gets its acid attack off before dying (you're the only
+damage source in this step, so there's no race against anything else
+that would make higher health necessary). The spitter is positioned to
+the left with the other two rather than off on its own.
 
 ```
-/c local p = game.player.position; local surface = game.player.surface; local spawner = surface.create_entity{name="biter-spawner", position={p.x - 40, p.y}, force="enemy"}; spawner.health = 1; local worm = surface.create_entity{name="medium-worm-turret", position={p.x - 46, p.y}, force="enemy"}; worm.health = 50; surface.create_entity{name="small-spitter", position={p.x - 12, p.y}, force="enemy"}
+/c local p = game.player.position; local surface = game.player.surface; local spawner = surface.create_entity{name="biter-spawner", position={p.x - 40, p.y}, force="enemy"}; spawner.health = 1; local worm = surface.create_entity{name="medium-worm-turret", position={p.x - 46, p.y}, force="enemy"}; worm.health = 1; local spitter = surface.create_entity{name="small-spitter", position={p.x - 12, p.y}, force="enemy"}; spitter.health = 1
 ```
-**Action:** Let the worm land at least one acid hit on you before you
-kill it - don't finish it off on your first swing. Then walk over to the
-spitter and let it land at least one acid hit on you too before killing
-it. You need damage from **both** acid types before either attacker dies,
-or the acid-diversity check below has nothing to compare - killing on
-sight defeats the point. Once you've taken both hits, kill the spawner,
+**Action:** Approach the worm turret and let it land its acid attack on
+you before your own hit kills it - it's 1 HP, so any hit ends it, meaning
+you have to let it fire first rather than closing in and one-shotting it
+on sight. Then do the same with the spitter. You need damage from **both**
+acid types before either attacker dies, or the acid-diversity check below
+has nothing to compare. Once you've taken both hits, kill the spawner,
 worm, and spitter (any order). Wait ~20 seconds after the last kill for
 both acid patches to fully fade.
 

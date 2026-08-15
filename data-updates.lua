@@ -4,16 +4,37 @@
 -- right stage for editing prototypes that already exist (vanilla or
 -- other mods'), rather than defining new ones.
 --
--- CONFIRMED (PR #13/#14): on_trigger_created_entity only fires for a
--- create-entity trigger effect that has trigger_created_entity = true set
--- on it, and vanilla's flamethrower/spitter/worm stream prototypes leave
--- that flag unset by default to save the event overhead - setting it here
--- on every stream's create-fire target effect is what makes
--- script/tracker.lua's on_trigger_created_entity fire at all for a
--- flame/acid patch. Verified against real 2.0.76 data: effect_created is
--- now recorded for the flamethrower turret, spitter, and worm turret
--- checklist steps (effect_expired - the fade-out side - is a separate,
--- still-open gap; see the TODO on TrackerEvents.on_object_destroyed).
+-- CONFIRMED for the flamethrower ONLY, not for acid - this is a
+-- correction of an earlier over-broad claim here. on_trigger_created_entity
+-- only fires for a create-entity trigger effect that has
+-- trigger_created_entity = true set on it, and vanilla's flamethrower
+-- stream leaves that flag unset by default; setting it here on every
+-- stream's create-fire target effect is confirmed to be what makes
+-- script/tracker.lua's on_trigger_created_entity fire for the
+-- flamethrower's flame patch specifically.
+--
+-- INVESTIGATING (PR #15): effect_created has shown ONLY "flamethrower-
+-- turret" as a source across every real checklist run so far, including
+-- runs where a worm/spitter definitely landed acid damage on the player
+-- (confirmed via damage_event) - the previous claim that this was also
+-- confirmed for spitter/worm acid was wrong; re-checking the actual probe
+-- evidence from when this was first added shows on_trigger_created_entity
+-- never fired for acid even then, only for the flamethrower's "fire-flame".
+-- The probe below dumps the acid streams' real action structure once, at
+-- game load (no combat needed - just launch with this mod active and
+-- check factorio-current.log), to find out whether their fire-creating
+-- effect (if any) is even shaped like "create-fire", or something else
+-- this loop never matches. Remove once resolved.
+local ACID_STREAM_PROBE_NAMES = {"acid-stream-spitter", "acid-stream-worm", "flamethrower-fire-stream"}
+for _, name in ipairs(ACID_STREAM_PROBE_NAMES) do
+    local stream = data.raw["stream"] and data.raw["stream"][name]
+    if stream then
+        log("[replay-recorder-probe] stream prototype " .. name .. " action=" .. serpent.block(stream.action))
+    else
+        log("[replay-recorder-probe] stream prototype " .. name .. " not found in data.raw['stream']")
+    end
+end
+
 local function enable_trigger_created_entity(prototype)
     if not prototype.action then return end
 
