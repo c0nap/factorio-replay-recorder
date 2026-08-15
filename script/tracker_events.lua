@@ -178,39 +178,68 @@ function TrackerEvents.ground_item_contents(entity)
     return {}
 end
 
--- Registers a ground item-entity for on_object_destroyed, the one time we
--- see it (storage.registered_ground_items guards against re-registering
--- every tick it's re-scanned - register_on_object_destroyed is idempotent
--- per its own docs, but there's no reason to call it repeatedly). This is
--- what closes the gap on_entity_died couldn't: register_on_object_destroyed
+-- Registers a ground item-entity for on_object_destroyed and returns the
+-- stable owner_key to use for it everywhere (ground_item_created, ongoing
+-- inventory_delta, and eventual ground_item_removed).
+--
+-- CONFIRMED against the real API: item-entity never has a unit_number, so
+-- unlike every other owner_kind in this file there's no cheap identity
+-- field to key off. LuaBootstrap::register_on_object_destroyed's own docs
+-- solve this though: "Registering the same object multiple times will
+-- still only fire the destruction event once, and will return the same
+-- registration number" - so calling this on every sighting (not just the
+-- first) is safe and cheap, and its first return value is a stable
+-- per-entity key for free, with no bookkeeping needed to detect "have I
+-- seen this exact entity before" the way ensure_ground_item_registered
+-- used to attempt via unit_number. register_on_object_destroyed also
 -- fires regardless of WHY the object was removed (picked up by walking
--- over it, mined, burned, ...), not just combat destruction.
-function TrackerEvents.ensure_ground_item_registered(entity)
-    if not entity.unit_number or storage.registered_ground_items[entity.unit_number] then return end
-
-    local ok, err = pcall(function() script.register_on_object_destroyed(entity) end)
-    if ok then
-        storage.registered_ground_items[entity.unit_number] = true
-    else
-        log("[replay-recorder] TrackerEvents: register_on_object_destroyed failed for " .. entity.name .. ": " .. tostring(err))
+-- over it, mined, burned, ...), not just combat destruction - the actual
+-- gap on_entity_died can't close.
+function TrackerEvents.ground_item_key(entity)
+    local ok, registration_number = pcall(function() return script.register_on_object_destroyed(entity) end)
+    if not ok then
+        log("[replay-recorder] TrackerEvents: register_on_object_destroyed failed for " .. entity.name .. ": " .. tostring(registration_number))
+        return nil
     end
+    storage.registered_ground_items[registration_number] = true
+    return "ground_item_" .. registration_number
 end
 
--- Fires for ANY object this mod has registered via
--- register_on_object_destroyed, regardless of mod or object type (the
--- registry is global, per its docs) - so this only acts when the
--- destroyed object is a LuaEntity (defines.target_type.entity) whose
--- useful_id (== the entity's former unit_number for entity targets) is
--- one we actually registered ourselves, via storage.registered_ground_items.
--- Clears the cache entry (the actual fix for the leak) and emits a
--- one-time ground_item_removed event, mirroring corpse_expired.
+-- Fires for ANY object this mod (or any other mod) has registered via
+-- register_on_object_destroyed - the registration is global, per its own
+-- docs - so this only acts on objects one of the registries below
+-- recognizes as ours. Keyed by registration_number, NOT useful_id: the
+-- confirmed docs only pin useful_id down generically as "specific to the
+-- object type" (LuaTrain::id for trains, for example), with no guarantee
+-- it exists at all for a type with no natural identifier like item-entity
+-- or fire - registration_number, by contrast, is confirmed stable and
+-- returned both at registration time and in this event, which is exactly
+-- what TrackerEvents.ground_item_key and Tracker.on_trigger_created_entity
+-- rely on above.
 function TrackerEvents.on_object_destroyed(event)
     if event.type ~= defines.target_type.entity then return end
-    if not storage.registered_ground_items[event.useful_id] then return end
 
-    storage.registered_ground_items[event.useful_id] = nil
-    storage.inventory_cache["ground_item_" .. event.useful_id] = nil
-    Exporter.log_event(game.tick, "ground_item_removed", {owner = "ground_item_" .. event.useful_id})
+    if storage.registered_ground_items[event.registration_number] then
+        storage.registered_ground_items[event.registration_number] = nil
+        local owner_key = "ground_item_" .. event.registration_number
+        storage.inventory_cache[owner_key] = nil
+        Exporter.log_event(game.tick, "ground_item_removed", {owner = owner_key})
+        return
+    end
+
+    -- The other half of "an acid entity loses potency and fades away" -
+    -- see Tracker.on_trigger_created_entity for where this is populated
+    -- and why: on_entity_died is confirmed to never fire for a fire/acid
+    -- patch's expiry, so effect_expired has to come from here instead.
+    -- The entity itself is already gone by the time this fires (that's
+    -- the point of the event), so its name/position have to have been
+    -- cached at registration time - there's no live entity left to read
+    -- them off of here.
+    local fire_effect = storage.registered_fire_effects[event.registration_number]
+    if fire_effect then
+        storage.registered_fire_effects[event.registration_number] = nil
+        Exporter.log_event(game.tick, "effect_expired", {name = fire_effect.name, position = fire_effect.position})
+    end
 end
 
 local function belt_line_contents_equal(a, b)
@@ -299,43 +328,11 @@ end
 -- it's physically in an active zone, just without this provenance record.
 function TrackerEvents.on_player_dropped_item(event)
     local entity = event.entity
-
-    -- TEMPORARY (PR #13): ground_item_created/ground_item_removed and
-    -- inventory_delta's ground_item owner_kind all stayed at 0 events in
-    -- a real session, with zero evidence of why. Log unconditionally -
-    -- this event is rare enough (one manual drop per checklist run) that
-    -- spam isn't a concern.
-    local probe_msg = "[replay-recorder-probe] on_player_dropped_item: event.entity=" .. tostring(entity)
-    if entity then
-        probe_msg = probe_msg .. " valid=" .. tostring(entity.valid)
-        if entity.valid then
-            probe_msg = probe_msg .. " unit_number=" .. tostring(entity.unit_number)
-        end
-    end
-    log(probe_msg)
-
     if not entity or not entity.valid then return end
 
-    -- unit_number is no longer required to log this creation event - a
-    -- corpse in an earlier round turned out to only sometimes have one,
-    -- and requiring it there silently rejected every real corpse. If
-    -- item-entity turns out to have the same characteristic,
-    -- ensure_ground_item_registered (needs a stable id for the
-    -- on_object_destroyed registry, not just a one-time event) still
-    -- gates on unit_number and simply skips registration when absent -
-    -- ongoing content/removal tracking for such an item would be a real,
-    -- known gap, but this creation event no longer silently disappears
-    -- with it.
-    TrackerEvents.ensure_ground_item_registered(entity)
-    local owner_key
-    if entity.unit_number then
-        owner_key = "ground_item_" .. entity.unit_number
-    else
-        owner_key = "ground_item_dropped_" .. event.player_index .. "_" .. game.tick
-        log("[replay-recorder] TrackerEvents: dropped item-entity (" .. entity.name .. ") has no unit_number - "
-            .. "ground_item_created still recorded via " .. owner_key .. ", but ongoing content/removal tracking "
-            .. "for it needs a stable id this doesn't have")
-    end
+    local owner_key = TrackerEvents.ground_item_key(entity)
+    if not owner_key then return end
+
     Exporter.log_event(game.tick, "ground_item_created", {
         owner = owner_key,
         position = entity.position,

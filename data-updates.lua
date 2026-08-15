@@ -4,26 +4,16 @@
 -- right stage for editing prototypes that already exist (vanilla or
 -- other mods'), rather than defining new ones.
 --
--- UNVERIFIED (PR #13): on real 2.0.76 data, effect_created/effect_expired
--- (script/tracker.lua's on_trigger_created_entity/on_entity_died) never
--- fired for either the flamethrower turret test or a real spitter/acid
--- fight - not "fired with the wrong entity.type", never fired AT ALL (the
--- probe in on_trigger_created_entity logs every distinct name/type it
--- ever sees, and produced zero lines across that whole session). One
--- explanation offered for that: on_trigger_created_entity only fires for
--- a create-entity trigger effect that has trigger_created_entity = true
--- set on it, and vanilla's flamethrower/spitter stream prototypes leave
--- that flag unset by default to save the event overhead. This file tries
--- exactly that - setting the flag on every stream's create-fire target
--- effect - on the theory that it's missing, not that this mod's own
--- entity.type filter is wrong. NOT independently confirmed. The existing
--- on_trigger_created_entity probe is the direct test: if this flag name/
--- placement is right, probe lines should start appearing for fire/acid
--- entities on the next real session; if it's wrong, nothing changes
--- (Factorio's data stage generally warns on an unrecognized prototype
--- property rather than failing outright, but if the game refuses to
--- start with this mod active, that itself is confirmation this specific
--- attempt is wrong - delete this file to revert).
+-- CONFIRMED (PR #13/#14): on_trigger_created_entity only fires for a
+-- create-entity trigger effect that has trigger_created_entity = true set
+-- on it, and vanilla's flamethrower/spitter/worm stream prototypes leave
+-- that flag unset by default to save the event overhead - setting it here
+-- on every stream's create-fire target effect is what makes
+-- script/tracker.lua's on_trigger_created_entity fire at all for a
+-- flame/acid patch. Verified against real 2.0.76 data: effect_created is
+-- now recorded for the flamethrower turret, spitter, and worm turret
+-- checklist steps (effect_expired - the fade-out side - is a separate,
+-- still-open gap; see the TODO on TrackerEvents.on_object_destroyed).
 local function enable_trigger_created_entity(prototype)
     if not prototype.action then return end
 
