@@ -4,37 +4,28 @@
 -- right stage for editing prototypes that already exist (vanilla or
 -- other mods'), rather than defining new ones.
 --
--- CONFIRMED for the flamethrower ONLY, not for acid - this is a
--- correction of an earlier over-broad claim here. on_trigger_created_entity
--- only fires for a create-entity trigger effect that has
--- trigger_created_entity = true set on it, and vanilla's flamethrower
--- stream leaves that flag unset by default; setting it here on every
--- stream's create-fire target effect is confirmed to be what makes
--- script/tracker.lua's on_trigger_created_entity fire for the
--- flamethrower's flame patch specifically.
+-- CONFIRMED (PR #15): on_trigger_created_entity only fires for a
+-- create-entity trigger effect that has trigger_created_entity = true set
+-- on it, and vanilla's flamethrower stream leaves that flag unset by
+-- default; setting it here on every matching prototype's create-fire
+-- target effect is what makes script/tracker.lua's on_trigger_created_entity
+-- fire at all.
 --
--- INVESTIGATING (PR #15): effect_created has shown ONLY "flamethrower-
--- turret" as a source across every real checklist run so far, including
--- runs where a worm/spitter definitely landed acid damage on the player
--- (confirmed via damage_event) - the previous claim that this was also
--- confirmed for spitter/worm acid was wrong; re-checking the actual probe
--- evidence from when this was first added shows on_trigger_created_entity
--- never fired for acid even then, only for the flamethrower's "fire-flame".
--- The probe below dumps the acid streams' real action structure once, at
--- game load (no combat needed - just launch with this mod active and
--- check factorio-current.log), to find out whether their fire-creating
--- effect (if any) is even shaped like "create-fire", or something else
--- this loop never matches. Remove once resolved.
-local ACID_STREAM_PROBE_NAMES = {"acid-stream-spitter", "acid-stream-worm", "flamethrower-fire-stream"}
-for _, name in ipairs(ACID_STREAM_PROBE_NAMES) do
-    local stream = data.raw["stream"] and data.raw["stream"][name]
-    if stream then
-        log("[replay-recorder-probe] stream prototype " .. name .. " action=" .. serpent.block(stream.action))
-    else
-        log("[replay-recorder-probe] stream prototype " .. name .. " not found in data.raw['stream']")
-    end
-end
-
+-- FIXED (PR #15): this loop used to only scan data.raw["stream"], which is
+-- why effect_created only ever showed "flamethrower-turret" as a source
+-- across multiple real checklist runs, even ones with confirmed acid
+-- damage landing. A real run's damage_event data showed the actual acid
+-- entities by name - "acid-stream-spitter-small", "acid-stream-worm-medium",
+-- "acid-splash-fire-spitter-small", "acid-splash-fire-worm-medium" - and a
+-- data-stage probe confirmed "acid-stream-spitter"/"acid-stream-worm" (the
+-- names guessed before any of this was named-confirmed) don't exist under
+-- data.raw["stream"] at all. Despite "stream" being in their prototype
+-- NAME, biters' acid attacks are registered as data.raw["projectile"]
+-- prototypes, not data.raw["stream"] - only the flamethrower's continuous
+-- attack is an actual "stream" type. data.lua's separate script-trigger
+-- injection loop already covers "projectile"/"artillery-projectile"/
+-- "stream" uniformly (which is why projectile_impact/damage_event already
+-- had full acid coverage); this loop is widened to match.
 local function enable_trigger_created_entity(prototype)
     if not prototype.action then return end
 
@@ -62,6 +53,25 @@ local function enable_trigger_created_entity(prototype)
     end
 end
 
-for _, stream in pairs(data.raw["stream"] or {}) do
-    enable_trigger_created_entity(stream)
+for _, p_type in pairs({"projectile", "artillery-projectile", "stream"}) do
+    for _, prototype in pairs(data.raw[p_type] or {}) do
+        enable_trigger_created_entity(prototype)
+    end
+end
+
+-- CONFIRMING (PR #15): dumps the real action structure for the now-known
+-- real acid entity names, under the now-known real data.raw key
+-- ("projectile", not "stream"), so the next real run confirms the widened
+-- loop above actually reaches a "create-fire" effect for them (the
+-- traversal logic itself is generic/shared with the stream case, but that
+-- was never directly verified for a projectile-shaped delivery). Remove
+-- once effect_created shows more than one source in a real run.
+local ACID_PROJECTILE_PROBE_NAMES = {"acid-stream-spitter-small", "acid-stream-worm-medium"}
+for _, name in ipairs(ACID_PROJECTILE_PROBE_NAMES) do
+    local projectile = data.raw["projectile"] and data.raw["projectile"][name]
+    if projectile then
+        log("[replay-recorder-probe] projectile prototype " .. name .. " action=" .. serpent.block(projectile.action))
+    else
+        log("[replay-recorder-probe] projectile prototype " .. name .. " not found in data.raw['projectile']")
+    end
 end

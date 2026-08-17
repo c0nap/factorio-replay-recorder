@@ -346,6 +346,17 @@ function Tracker.on_trigger_created_entity(event)
     })
 end
 
+-- FIXED (PR #15): "unit"/"unit-spawner" (biters/spitters/worms and their
+-- nests as DAMAGE TARGETS, not dealers - they were always fine as a
+-- `dealer` value, e.g. "small-biter" already showed up there) were never
+-- in this list, so damage dealt TO one was silently dropped regardless of
+-- who dealt it. This is more than a checklist-test gap: a real combat
+-- replay wants "the tank shot at this biter three times before it died"
+-- the same way it wants any other target's damage history, and it's what
+-- was actually blocking the vehicle shot-vs-run-over check - shoot_target/
+-- run_over_target are both small-biter (type "unit"), so damage_event
+-- could never contain a "tank" dealer at all before this, regardless of
+-- what the player did.
 local DAMAGE_TRACKED_TYPES = {
     ["turret"] = true,
     ["ammo-turret"] = true,
@@ -358,6 +369,8 @@ local DAMAGE_TRACKED_TYPES = {
     ["spider-vehicle"] = true,
     ["locomotive"] = true,
     ["artillery-wagon"] = true,
+    ["unit"] = true,
+    ["unit-spawner"] = true,
 }
 
 function Tracker.on_entity_damaged(event)
@@ -368,17 +381,23 @@ function Tracker.on_entity_damaged(event)
     local in_zone = CombatZones.notify_and_check(entity.surface, entity.position)
     if not (in_zone or Config.full_recording_mode()) then return end
 
-    -- INVESTIGATING (PR #15): the checklist's vehicle shot-vs-run-over
-    -- check has failed two different ways across two real runs (missing
-    -- run-over, then missing shot) - inconsistent with a simple execution
-    -- gap. `event.source` below (used as dealt_by) was never actually
-    -- confirmed against the real on_entity_damaged event fields, only
-    -- assumed - the comment that used to be here asserted a `cause`/
-    -- `source` split as if it were confirmed API. This dumps every
-    -- candidate field once per distinct (target unit_number, cause name)
-    -- pair whenever a car/spider-vehicle is the cause, so the next real
-    -- vehicle-combat step settles what these fields actually are instead
-    -- of guessing again. Remove once resolved.
+    -- CONFIRMED, generally: a real run's damage_event (dealer, dealt_by)
+    -- breakdown shows `dealt_by` consistently resolving to whatever
+    -- literally delivered the hit across a wide range of attackers
+    -- (fire-flame, flamethrower-fire-stream, both acid entity types,
+    -- biters dealing melee) - the `cause`/`source` split this file
+    -- asserted was real, before ever being checked against real data,
+    -- turned out to hold up. STILL UNCONFIRMED specifically: the
+    -- shot-vs-run-over check kept failing not because of this field
+    -- split, but because DAMAGE_TRACKED_TYPES never included "unit" (see
+    -- above) - a tank hitting a biter was silently dropped entirely, so
+    -- this exact (vehicle cause, unit target) combination has never once
+    -- been recorded to check against. This probe dumps every candidate
+    -- field once per distinct (target unit_number, cause name) pair
+    -- whenever a car/spider-vehicle is the cause, specifically to confirm
+    -- a bare collision really does produce a nil/absent `source` the way
+    -- check_vehicle_combat_credit_diversity assumes. Remove once
+    -- confirmed either way.
     if event.cause and event.cause.valid and (event.cause.type == "car" or event.cause.type == "spider-vehicle") then
         storage.vehicle_damage_probe_seen = storage.vehicle_damage_probe_seen or {}
         local probe_key = tostring(entity.unit_number) .. "/" .. event.cause.name
@@ -477,6 +496,18 @@ end
 -- script/item_chains.lua sample on a slow interval instead.
 local PHYSICAL_ITEM_TYPES = {"container", "logistic-container", "character-corpse", "inserter", "item-entity"}
 
+-- INVESTIGATING (PR #15): reverse of defines.entity_status (built once, at
+-- load time) so the inserter probe below can log LuaEntity.status as a
+-- readable name (e.g. "no_power", "item_ingredient_shortage") instead of
+-- a bare number - this is the API's own purpose-built answer to "why
+-- isn't this thing working", which fuel/held-stack alone haven't settled
+-- for step 5's feeder inserter (confirmed to have active burning fuel,
+-- yet never once observed holding an item across three real runs).
+local ENTITY_STATUS_NAMES = {}
+for status_name, status_value in pairs(defines.entity_status) do
+    ENTITY_STATUS_NAMES[status_value] = status_name
+end
+
 local function scan_physical_items(surface, area)
     local entities = surface.find_entities_filtered{area = area, type = PHYSICAL_ITEM_TYPES}
 
@@ -513,11 +544,15 @@ local function scan_physical_items(surface, area)
                 -- INVESTIGATING (PR #15): inserter_hand owner_kind has
                 -- never once appeared across three real checklist runs,
                 -- despite step 5's feeder burner-inserter having a real
-                -- pickup source and drop target. Logs each inserter's
-                -- burner/fuel state once at first sight, and again the
-                -- first time its hand is ever seen holding something, so
-                -- the next real run tells us whether this is a fueling/
-                -- ignition problem or just scan-timing luck. Remove once
+                -- pickup source and drop target. A round of this probe
+                -- already ruled out fueling - a real run showed the
+                -- feeder with 500000 J of actively burning fuel and 2
+                -- more coal in reserve, so LuaEntity.insert() is routing
+                -- fuel into a burner entity correctly. held_stack was
+                -- still never once seen valid_for_read though, so this
+                -- adds LuaEntity.status tracking below (the API's own
+                -- purpose-built "why isn't this working" signal) on top
+                -- of the fuel/held-stack checks already here. Remove once
                 -- resolved.
                 storage.inserter_hand_probe_seen = storage.inserter_hand_probe_seen or {}
                 local probe_state = storage.inserter_hand_probe_seen[ent.unit_number]
@@ -542,6 +577,23 @@ local function scan_physical_items(surface, area)
                     storage.inserter_hand_probe_seen[ent.unit_number] = "held_seen"
                     log("[replay-recorder-probe] inserter hand non-empty: name=" .. ent.name
                         .. " unit_number=" .. ent.unit_number .. " item=" .. held.name .. " count=" .. held.count)
+                end
+
+                -- LuaEntity.status is the API's own designed answer to
+                -- "why isn't this thing working" (no_power, waiting on
+                -- ingredients, disabled, ...) - logged on every CHANGE
+                -- (not every tick) so a burner-inserter's real state
+                -- transitions over its whole 10-second window show up as
+                -- a short, readable timeline instead of one snapshot.
+                storage.inserter_status_probe_seen = storage.inserter_status_probe_seen or {}
+                local ok_status, status = pcall(function() return ent.status end)
+                if ok_status and status ~= nil then
+                    local status_name = ENTITY_STATUS_NAMES[status] or ("unknown(" .. tostring(status) .. ")")
+                    if storage.inserter_status_probe_seen[ent.unit_number] ~= status_name then
+                        storage.inserter_status_probe_seen[ent.unit_number] = status_name
+                        log("[replay-recorder-probe] inserter status changed: name=" .. ent.name
+                            .. " unit_number=" .. ent.unit_number .. " status=" .. status_name .. " tick=" .. game.tick)
+                    end
                 end
 
                 TrackerEvents.log_inventory_delta("inserter_" .. ent.unit_number, "inserter_hand", TrackerEvents.held_stack_contents(ent))
