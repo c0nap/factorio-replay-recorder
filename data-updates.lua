@@ -154,50 +154,39 @@ for prototype_name, prototype in pairs(data.raw["unit"] or {}) do
     enable_trigger_created_entity_for_unit(prototype_name, prototype)
 end
 
--- CONFIRMING (PR #15): a real checklist run after the unit-level scan
--- above showed damage_event now crediting 'acid-splash-fire-spitter-small'
--- / 'acid-splash-fire-worm-medium' as real, distinct damage sources - so
--- those entities ARE being created - but on_trigger_created_entity's own
--- probe log still only ever fires for flamethrower's fire-flame, never
--- for either acid entity. Two real unknowns remain, and both are
--- prototype DATA, not documented schema, so neither can be settled by a
--- doc page - only a relaunch-only dump can:
---   1. Which data.raw category actually holds "medium-worm-turret"? Worms
---      are stationary, unlike mobile biters/spitters ("unit"), so they
---      may live under "turret" or one of its ammo/electric/fluid
---      subtypes instead - if so, the unit-only scan above never even
---      looked at them. Widened below as a harmless superset in the
---      meantime (costs nothing if a category is absent or wrong, same
---      reasoning already used for projectile/artillery-projectile).
---   2. What does small-spitter's real attack_parameters.ammo_type.action
---      structure actually look like? If "acid-splash-fire-spitter-small"
---      is created via a "create-sticker" effect rather than "create-fire"/
---      "create-entity", the current type-string filter in
---      flag_target_effects would walk right past it even with the right
---      prototype in view - or the effect may be nested somewhere this
---      code's action/action_delivery/target_effects path doesn't reach at
---      all. Remove this whole probe once effect_created shows an acid
---      source in a real run.
+-- CONFIRMED (PR #15) by a real relaunch dump: medium-worm-turret does
+-- live under data.raw["turret"] (not "unit"), so the widened scan below
+-- is what actually reaches it - kept, no longer speculative.
 for _, p_type in pairs({"turret", "ammo-turret", "electric-turret", "fluid-turret"}) do
     for prototype_name, prototype in pairs(data.raw[p_type] or {}) do
         enable_trigger_created_entity_for_unit(prototype_name, prototype)
     end
 end
 
-local ATTACK_PARAMETERS_PROBE_NAMES = {"small-spitter", "medium-worm-turret"}
-for _, name in ipairs(ATTACK_PARAMETERS_PROBE_NAMES) do
-    local found_category, found_prototype = nil, nil
-    for category_name, category in pairs(data.raw) do
-        if type(category) == "table" and category[name] then
-            found_category, found_prototype = category_name, category[name]
-            break
-        end
-    end
-
-    if found_prototype then
-        log("[replay-recorder-probe] prototype " .. name .. " found under data.raw['" .. found_category
-            .. "'], attack_parameters=" .. serpent.block(found_prototype.attack_parameters))
+-- CONFIRMED (PR #15) by that same dump, and ruling out the whole
+-- unit/turret-level approach above for THIS specific case: both
+-- small-spitter's and medium-worm-turret's real
+-- attack_parameters.ammo_type.action are just
+--   { type = "direct", action_delivery = { type = "stream", stream = "acid-stream-*" [, source_offset = ...] } }
+-- - no source_effects or target_effects field is present at all. There is
+-- nothing here for flag_action/flag_target_effects to ever find, on
+-- either unit - the scan above is correctly implemented, it's just
+-- looking in a spot that structurally cannot contain the answer for this
+-- weapon. Combined with the stream prototype's own .action being
+-- confirmed nil earlier, "acid-splash-fire-spitter-small"/"-worm-medium"
+-- must be created through some OTHER field on the FluidStreamPrototype
+-- neither probe has looked at yet - which means the next real question is
+-- what the REST of that prototype's data actually contains, not another
+-- schema lookup (the full Trigger/TriggerDelivery/TriggerEffect schema is
+-- already confirmed and exhausted for this path). Dumping the whole
+-- prototype, not just .action, is the only way to see it. Remove once
+-- effect_created shows an acid source in a real run.
+local FULL_STREAM_PROBE_NAMES = {"acid-stream-spitter-small", "acid-stream-worm-medium"}
+for _, name in ipairs(FULL_STREAM_PROBE_NAMES) do
+    local stream = data.raw["stream"] and data.raw["stream"][name]
+    if stream then
+        log("[replay-recorder-probe] full stream prototype " .. name .. "=" .. serpent.block(stream))
     else
-        log("[replay-recorder-probe] prototype " .. name .. " not found in any data.raw category")
+        log("[replay-recorder-probe] stream prototype " .. name .. " not found in data.raw['stream']")
     end
 end
