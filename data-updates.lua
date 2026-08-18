@@ -34,41 +34,75 @@
 -- would catch any other vanilla/modded prototype using this kind of
 -- effect under those categories too) - kept, but it is not what fixes
 -- the acid case either.
-local function enable_trigger_created_entity(prototype)
+-- FIXED (post-PR #15, real crash): widening the scan below to
+-- "projectile"/"artillery-projectile" (on top of "stream") meant this
+-- traversal started running against ~30 vanilla prototypes it had never
+-- actually been exercised on before (atomic bombs, capsules, lasers,
+-- rockets, ...) - previously the only real-world input was the
+-- flamethrower's stream, which happens to have a shape this code's
+-- wrapping logic handles fine. One of those other prototypes doesn't:
+-- Factorio failed to load with "attempt to index local 'effect' (a
+-- boolean value)" at the effect.type check, meaning pairs() over some
+-- delivery's target_effects yielded a plain `true`/`false` for some key,
+-- not a TriggerEffectItem table - PROVING the shape assumption held for
+-- flamethrower does not hold universally. Every level now checks
+-- type(...) == "table" before indexing into it, and logs (rather than
+-- silently drops) whichever prototype had the unexpected shape, so a
+-- future data-stage log tells us which one it was instead of us needing
+-- to guess again.
+local function enable_trigger_created_entity(prototype_name, prototype)
     if not prototype.action then return end
 
     local actions = prototype.action
-    if not actions[1] then actions = {actions} end
+    if type(actions) == "table" and not actions[1] then actions = {actions} end
+    if type(actions) ~= "table" then
+        log("[replay-recorder] data-updates: " .. prototype_name .. ".action is a " .. type(actions) .. ", not a table - skipped")
+        return
+    end
 
     for _, action in pairs(actions) do
-        if action.action_delivery then
+        if type(action) ~= "table" then
+            log("[replay-recorder] data-updates: " .. prototype_name .. " has a non-table action entry (" .. type(action) .. ") - skipped")
+        elseif action.action_delivery then
             local deliveries = action.action_delivery
-            if not deliveries[1] then deliveries = {deliveries} end
+            if type(deliveries) == "table" and not deliveries[1] then deliveries = {deliveries} end
 
-            for _, delivery in pairs(deliveries) do
-                if delivery.target_effects then
-                    local effects = delivery.target_effects
-                    if not effects[1] then effects = {effects} end
+            if type(deliveries) ~= "table" then
+                log("[replay-recorder] data-updates: " .. prototype_name .. ".action_delivery is a " .. type(deliveries) .. ", not a table - skipped")
+            else
+                for _, delivery in pairs(deliveries) do
+                    if type(delivery) ~= "table" then
+                        log("[replay-recorder] data-updates: " .. prototype_name .. " has a non-table delivery entry (" .. type(delivery) .. ") - skipped")
+                    elseif delivery.target_effects then
+                        local effects = delivery.target_effects
+                        if type(effects) == "table" and not effects[1] then effects = {effects} end
 
-                    for _, effect in pairs(effects) do
-                        -- "create-fire" is confirmed correct (see above).
-                        -- "create-entity" is added as a schema-informed
-                        -- but NOT yet proven extension: the real 2.0.76
-                        -- TriggerEffectItem type list includes both
-                        -- CreateFireTriggerEffectItem and
-                        -- CreateEntityTriggerEffectItem as distinct,
-                        -- equally-real types, and trigger_created_entity
-                        -- conceptually reads as a flag any entity-creating
-                        -- effect could plausibly support, not just the
-                        -- fire-specific one. Since the table/type-string
-                        -- checks are now both confirmed correct and the
-                        -- acid case still doesn't fire, the remaining
-                        -- possibility is that acid's fire-creating effect
-                        -- (if it has one) uses this type instead. Narrow
-                        -- back to just "create-fire" if a real run's probe
-                        -- dump (below) shows acid actually uses neither.
-                        if effect.type == "create-fire" or effect.type == "create-entity" then
-                            effect.trigger_created_entity = true
+                        if type(effects) ~= "table" then
+                            log("[replay-recorder] data-updates: " .. prototype_name .. ".target_effects is a " .. type(effects) .. ", not a table - skipped")
+                        else
+                            for _, effect in pairs(effects) do
+                                if type(effect) ~= "table" then
+                                    log("[replay-recorder] data-updates: " .. prototype_name .. " has a non-table target_effects entry (" .. type(effect) .. ") - skipped")
+                                -- "create-fire" is confirmed correct (see above).
+                                -- "create-entity" is added as a schema-informed
+                                -- but NOT yet proven extension: the real 2.0.76
+                                -- TriggerEffectItem type list includes both
+                                -- CreateFireTriggerEffectItem and
+                                -- CreateEntityTriggerEffectItem as distinct,
+                                -- equally-real types, and trigger_created_entity
+                                -- conceptually reads as a flag any entity-creating
+                                -- effect could plausibly support, not just the
+                                -- fire-specific one. Since the table/type-string
+                                -- checks are now both confirmed correct and the
+                                -- acid case still doesn't fire, the remaining
+                                -- possibility is that acid's fire-creating effect
+                                -- (if it has one) uses this type instead. Narrow
+                                -- back to just "create-fire" if a real run's probe
+                                -- dump (below) shows acid actually uses neither.
+                                elseif effect.type == "create-fire" or effect.type == "create-entity" then
+                                    effect.trigger_created_entity = true
+                                end
+                            end
                         end
                     end
                 end
@@ -78,8 +112,8 @@ local function enable_trigger_created_entity(prototype)
 end
 
 for _, p_type in pairs({"projectile", "artillery-projectile", "stream"}) do
-    for _, prototype in pairs(data.raw[p_type] or {}) do
-        enable_trigger_created_entity(prototype)
+    for prototype_name, prototype in pairs(data.raw[p_type] or {}) do
+        enable_trigger_created_entity(prototype_name, prototype)
     end
 end
 

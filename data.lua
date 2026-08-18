@@ -15,29 +15,51 @@
 -- which is how the mod tracks combat without polling every projectile in
 -- the game on every tick.
 
+-- HARDENED (post-PR #15): a duplicate of this same actions/deliveries
+-- wrapping pattern in data-updates.lua crashed the game entirely -
+-- "attempt to index local 'effect' (a boolean value)" - once its scan was
+-- widened to cover this same "projectile"/"artillery-projectile"/"stream"
+-- set: some prototype among the ~30+ vanilla types in there (atomic
+-- bombs, capsules, lasers, ...) has an action/delivery/effects shape this
+-- pattern's original wrapping logic didn't anticipate, since it had only
+-- ever actually been exercised against the flamethrower's stream before.
+-- This function has been scanning the exact same prototype set since the
+-- mod's first version and hasn't crashed here (data-updates.lua runs
+-- AFTER this file, and the crash was there, not here) - but that's meant
+-- purely that no loaded prototype has happened to break it yet, not that
+-- the pattern was actually safe. Every level now checks type(...) ==
+-- "table" before indexing into it, same as the now-fixed copy in
+-- data-updates.lua.
 local function inject_script_trigger(prototype)
     if not prototype.action then return end
 
     -- Factorio actions can be a single table or an array of tables
     local actions = prototype.action
-    if not actions[1] then actions = {actions} end
+    if type(actions) == "table" and not actions[1] then actions = {actions} end
+    if type(actions) ~= "table" then return end
 
     for _, action in pairs(actions) do
-        if action.action_delivery then
+        if type(action) == "table" and action.action_delivery then
             local deliveries = action.action_delivery
-            if not deliveries[1] then deliveries = {deliveries} end
+            if type(deliveries) == "table" and not deliveries[1] then deliveries = {deliveries} end
 
-            for _, delivery in pairs(deliveries) do
-                -- Append a script trigger effect to the delivery. The
-                -- weapon's own prototype name is baked into the effect_id
-                -- (rather than sent as separate data, which script triggers
-                -- don't support) so control.lua can tell WHICH projectile
-                -- or stream hit, not just that something did.
-                delivery.target_effects = delivery.target_effects or {}
-                table.insert(delivery.target_effects, {
-                    type = "script",
-                    effect_id = "replay_combat_trigger:" .. prototype.name
-                })
+            if type(deliveries) == "table" then
+                for _, delivery in pairs(deliveries) do
+                    if type(delivery) == "table" then
+                        -- Append a script trigger effect to the delivery. The
+                        -- weapon's own prototype name is baked into the effect_id
+                        -- (rather than sent as separate data, which script triggers
+                        -- don't support) so control.lua can tell WHICH projectile
+                        -- or stream hit, not just that something did.
+                        if type(delivery.target_effects) ~= "table" then
+                            delivery.target_effects = {}
+                        end
+                        table.insert(delivery.target_effects, {
+                            type = "script",
+                            effect_id = "replay_combat_trigger:" .. prototype.name
+                        })
+                    end
+                end
             end
         end
     end
