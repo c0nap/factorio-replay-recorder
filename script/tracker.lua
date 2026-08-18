@@ -386,52 +386,18 @@ function Tracker.on_entity_damaged(event)
     -- this damage... (e.g. the character, turret, etc. that pulled the
     -- trigger)" and `source` is "the entity that is directly dealing the
     -- damage... (e.g. the projectile, flame, sticker, grenade, laser
-    -- beam, etc.)" - both fields exist, both are nilable (LuaEntity?),
-    -- and both mean exactly what this file already assumed before that
-    -- was ever checked. A nil `source` is therefore an explicitly
-    -- anticipated, normal case per the schema (not something we invented)
-    -- - consistent with a bare physical collision having no discrete
-    -- "delivery mechanism" entity the way a fired weapon does.
-    --
-    -- STILL OPEN: not the field mapping (settled above), but whether a
-    -- real vehicle-vs-unit collision - now actually reachable at all
-    -- since DAMAGE_TRACKED_TYPES gained "unit" above, having always
-    -- silently dropped this exact combination before - really does
-    -- produce a nil source in practice. That's runtime behavior, not
-    -- documentation, so this probe stays for one more real vehicle-
-    -- combat step to confirm it. Remove once confirmed.
-    if event.cause and event.cause.valid and (event.cause.type == "car" or event.cause.type == "spider-vehicle") then
-        storage.vehicle_damage_probe_seen = storage.vehicle_damage_probe_seen or {}
-        local probe_key = tostring(entity.unit_number) .. "/" .. event.cause.name
-        if not storage.vehicle_damage_probe_seen[probe_key] then
-            storage.vehicle_damage_probe_seen[probe_key] = true
-            local function safe_name(obj)
-                local ok, v = pcall(function() return obj and obj.valid and obj.name or nil end)
-                if not ok then return "ERROR(" .. tostring(v) .. ")" end
-                return v or "nil"
-            end
-            local function safe_field(fn)
-                local ok, v = pcall(fn)
-                if not ok then return "ERROR(" .. tostring(v) .. ")" end
-                if v == nil then return "nil" end
-                return tostring(v)
-            end
-            log("[replay-recorder-probe] on_entity_damaged (vehicle cause): target=" .. entity.name
-                .. " cause=" .. safe_name(event.cause)
-                .. " source=" .. safe_name(event.source)
-                .. " force=" .. safe_field(function() return event.force and event.force.name end)
-                .. " damage_type=" .. safe_field(function() return event.damage_type and event.damage_type.name end)
-                .. " original_damage_amount=" .. safe_field(function() return event.original_damage_amount end)
-                .. " final_damage_amount=" .. safe_field(function() return event.final_damage_amount end)
-                .. " final_health=" .. safe_field(function() return event.final_health end))
-        end
-    end
-
-    -- `cause` is assumed to be who's responsible (the character/turret/
-    -- biter/vehicle that pulled the trigger) and `source` the literal
-    -- thing dealing the damage right now (the projectile/flame/sticker it
-    -- fired) - NOT independently confirmed against the real event fields
-    -- for this specific event, see the probe above.
+    -- beam, etc.)". CONFIRMED, separately, by a real vehicle-combat probe
+    -- (a tank shooting one target and running over another): a bare
+    -- physical collision does NOT leave `source` nil the way was first
+    -- assumed - it sets `source` to the SAME entity as `cause` (both
+    -- "tank"), since the vehicle itself is "the thing directly dealing
+    -- the damage" when nothing more specific (no projectile/stream) is
+    -- involved. A fired weapon instead sets `source` to that projectile/
+    -- stream's own name (e.g. "cannon-projectile"), distinct from
+    -- `cause`. tools/verify_checklist.py's shot-vs-run-over check now
+    -- distinguishes the two exactly this way (dealt_by == dealer means a
+    -- bare collision; dealt_by naming something else means a weapon hit)
+    -- instead of the wrong nil-vs-set assumption it started with.
     Exporter.log_event(game.tick, "damage_event", {
         target = entity.name,
         target_type = entity.type,
