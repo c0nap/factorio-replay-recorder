@@ -94,13 +94,21 @@ end
 -- flamethrower does not hold universally. Every level now checks
 -- type(...) == "table" before indexing into it, and logs (rather than
 -- silently drops) whichever prototype had the unexpected shape.
-local function enable_trigger_created_entity(prototype_name, prototype)
-    if not prototype.action then return end
+-- CONFIRMED (PR #15) against the real FluidStreamPrototype docs: "action"
+-- and "initial_action" are two DISTINCT fields - "action" fires every time
+-- a particle lands, "initial_action" fires only for the first particle.
+-- The earlier probe only ever checked .action (confirmed nil for both
+-- acid streams) and never looked at .initial_action at all - which is
+-- exactly the kind of once-only effect a splash/puddle spawn would use.
+-- Every prototype-level field name is now scanned through the same
+-- flag_field() helper.
+local function flag_field(prototype_name, field_name, field_value)
+    if not field_value then return end
 
-    local actions = prototype.action
+    local actions = field_value
     if type(actions) == "table" and not actions[1] then actions = {actions} end
     if type(actions) ~= "table" then
-        log("[replay-recorder] data-updates: " .. prototype_name .. ".action is a " .. type(actions) .. ", not a table - skipped")
+        log("[replay-recorder] data-updates: " .. prototype_name .. "." .. field_name .. " is a " .. type(actions) .. ", not a table - skipped")
         return
     end
 
@@ -109,84 +117,29 @@ local function enable_trigger_created_entity(prototype_name, prototype)
     end
 end
 
+local function enable_trigger_created_entity(prototype_name, prototype)
+    flag_field(prototype_name, "action", prototype.action)
+    flag_field(prototype_name, "initial_action", prototype.initial_action)
+end
+
 for _, p_type in pairs({"projectile", "artillery-projectile", "stream"}) do
     for prototype_name, prototype in pairs(data.raw[p_type] or {}) do
         enable_trigger_created_entity(prototype_name, prototype)
     end
 end
 
--- Unit-level scan (acid spitters/worms, and anything else whose real
--- on-hit action lives on attack_parameters.ammo_type.action rather than
--- on the stream/projectile prototype itself - see the CONFIRMED note
--- above for the doc-backed path).
-local function enable_trigger_created_entity_for_unit(prototype_name, prototype)
-    local attack_parameters = prototype.attack_parameters
-    if type(attack_parameters) ~= "table" then return end
-
-    local ammo_types = attack_parameters.ammo_type
-    if not ammo_types then return end
-    if type(ammo_types) == "table" and not ammo_types[1] then ammo_types = {ammo_types} end
-
-    if type(ammo_types) ~= "table" then
-        log("[replay-recorder] data-updates: " .. prototype_name .. ".attack_parameters.ammo_type is a " .. type(ammo_types) .. ", not a table - skipped")
-        return
-    end
-
-    for _, ammo_type in pairs(ammo_types) do
-        if type(ammo_type) ~= "table" then
-            log("[replay-recorder] data-updates: " .. prototype_name .. " has a non-table ammo_type entry (" .. type(ammo_type) .. ") - skipped")
-        elseif ammo_type.action then
-            local actions = ammo_type.action
-            if type(actions) == "table" and not actions[1] then actions = {actions} end
-
-            if type(actions) ~= "table" then
-                log("[replay-recorder] data-updates: " .. prototype_name .. ".attack_parameters.ammo_type.action is a " .. type(actions) .. ", not a table - skipped")
-            else
-                for _, action in pairs(actions) do
-                    flag_action(prototype_name, action)
-                end
-            end
-        end
-    end
-end
-
-for prototype_name, prototype in pairs(data.raw["unit"] or {}) do
-    enable_trigger_created_entity_for_unit(prototype_name, prototype)
-end
-
--- CONFIRMED (PR #15) by a real relaunch dump: medium-worm-turret does
--- live under data.raw["turret"] (not "unit"), so the widened scan below
--- is what actually reaches it - kept, no longer speculative.
-for _, p_type in pairs({"turret", "ammo-turret", "electric-turret", "fluid-turret"}) do
-    for prototype_name, prototype in pairs(data.raw[p_type] or {}) do
-        enable_trigger_created_entity_for_unit(prototype_name, prototype)
-    end
-end
-
--- CONFIRMED (PR #15) by that same dump, and ruling out the whole
--- unit/turret-level approach above for THIS specific case: both
--- small-spitter's and medium-worm-turret's real
--- attack_parameters.ammo_type.action are just
+-- RULED OUT (PR #15) against the real FluidStreamPrototype/AttackParameters/
+-- AmmoType/Trigger docs together: an earlier round of this file also
+-- scanned data.raw["unit"]/["turret"]/etc.'s attack_parameters.ammo_type.action,
+-- on the theory that acid's on-hit effect might be defined on the
+-- attacking unit rather than the stream. A real prototype dump proved
+-- that's not it either - small-spitter's and medium-worm-turret's real
+-- ammo_type.action is just
 --   { type = "direct", action_delivery = { type = "stream", stream = "acid-stream-*" [, source_offset = ...] } }
--- - no source_effects or target_effects field is present at all. There is
--- nothing here for flag_action/flag_target_effects to ever find, on
--- either unit - the scan above is correctly implemented, it's just
--- looking in a spot that structurally cannot contain the answer for this
--- weapon. Combined with the stream prototype's own .action being
--- confirmed nil earlier, "acid-splash-fire-spitter-small"/"-worm-medium"
--- must be created through some OTHER field on the FluidStreamPrototype
--- neither probe has looked at yet - which means the next real question is
--- what the REST of that prototype's data actually contains, not another
--- schema lookup (the full Trigger/TriggerDelivery/TriggerEffect schema is
--- already confirmed and exhausted for this path). Dumping the whole
--- prototype, not just .action, is the only way to see it. Remove once
--- effect_created shows an acid source in a real run.
-local FULL_STREAM_PROBE_NAMES = {"acid-stream-spitter-small", "acid-stream-worm-medium"}
-for _, name in ipairs(FULL_STREAM_PROBE_NAMES) do
-    local stream = data.raw["stream"] and data.raw["stream"][name]
-    if stream then
-        log("[replay-recorder-probe] full stream prototype " .. name .. "=" .. serpent.block(stream))
-    else
-        log("[replay-recorder-probe] stream prototype " .. name .. " not found in data.raw['stream']")
-    end
-end
+-- with no source_effects/target_effects field at all. The actual fix
+-- turned out to be much simpler and entirely on the stream prototype
+-- itself (see CONFIRMED note above): "action" and "initial_action" are
+-- two distinct FluidStreamPrototype fields, and only "action" was ever
+-- being scanned. That's why this file no longer touches
+-- data.raw["unit"]/["turret"] at all - removed as dead code once the real
+-- fix was found, not left in as a hedge.
