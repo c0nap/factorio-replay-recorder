@@ -248,3 +248,64 @@ isn't something a headless CI job can easily stand in for. Instead:
 ## License
 
 See [LICENSE](LICENSE).
+
+<!--
+Guidance for coding agents working on this repo (not rendered content for
+end users - kept here rather than deleted so it survives across sessions):
+
+FACTS TO STOP RE-DISCOVERING:
+- This mod targets Factorio 2.0.76 specifically, not 2.1 ("latest") - 2.1
+  changed parts of this API. Every lua-api.factorio.com link MUST read
+  https://lua-api.factorio.com/2.0.76/... - never .../latest/...
+- You (the agent) cannot fetch lua-api.factorio.com yourself - outbound
+  access to it is blocked in this environment. You cannot verify a class
+  property, event field, or prototype type against the real docs on your
+  own, no matter how confident you feel about it from training data.
+- Prototype NAMES almost always carry a size/variant suffix you will not
+  guess correctly from memory (e.g. "acid-stream-spitter-small", not
+  "acid-stream-spitter") - a probe or claim that says "X not found" is
+  at least as likely to mean "wrong name" as "wrong category". Don't
+  conclude the latter without checking the former first.
+
+THE COST ORDER - cheapest first, use the cheapest tool that can actually
+answer the question:
+1. Reason from what this repo's OWN code/history/tests already prove.
+   A check that's been passing every round already demonstrates something
+   real (e.g. step 4's passing item_distribution check proves inserter
+   drop_target direction for THIS exact placement pattern) - use it
+   before inventing a new probe to re-confirm the same fact.
+2. Ask the repo owner for a specific doc lookup: an exact class/event/type
+   page URL plus an exact property/field name to search for (e.g. "LuaEntity
+   class page, the `held_stack` property" or "on_entity_damaged event, full
+   field list"). This is a schema question - "what CAN this contain, what
+   does the API guarantee" - and costs the owner a Ctrl+F, seconds of
+   their time. Prefer this over guessing, and prefer it over writing a
+   runtime probe for anything that is genuinely documented API structure
+   rather than live game data.
+3. A relaunch-only data-stage probe (log() calls in data.lua/data-updates.lua,
+   or anything that runs before a save loads) - for questions that are
+   actual DATA, not schema (a specific vanilla prototype's real field
+   values, e.g. a stream's real action table) - lua-api.factorio.com
+   documents the FORMAT prototypes can take, never the actual values
+   vanilla uses, so no doc lookup can substitute here. Still much cheaper
+   than an in-game session: no save load, no combat, just launching
+   Factorio with the mod active.
+4. A full manual checklist playthrough (docs/testing-checklist.md) - only
+   for questions that are genuinely live gameplay behavior (does a real
+   entity's real runtime state do X during actual combat) that can't be
+   observed at load time. This costs the owner real, significant time and
+   effort. Never ask for this as a first resort, and never ask for it to
+   confirm something a doc lookup or relaunch-only probe could answer
+   instead - check that you've exhausted 1-3 first.
+
+WHEN YOU GET AN ANSWER: cross-check it against whatever runtime evidence
+already exists before proposing a fix, and say plainly which parts are now
+confirmed vs. which remain open. A "CONFIRMED" comment in this codebase
+must be backed by either real doc text someone actually pasted back, or
+real log/probe output someone actually observed - never by "it's confirmed
+for case A, so it probably also holds for case B" (this project's own
+history has at least one real bug that shipped from exactly that shortcut -
+grep this repo's git log for "acid" if you want the full story). If you
+aren't sure whether something is confirmed or assumed, say assumed.
+-->
+

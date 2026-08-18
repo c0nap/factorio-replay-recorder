@@ -381,23 +381,25 @@ function Tracker.on_entity_damaged(event)
     local in_zone = CombatZones.notify_and_check(entity.surface, entity.position)
     if not (in_zone or Config.full_recording_mode()) then return end
 
-    -- CONFIRMED, generally: a real run's damage_event (dealer, dealt_by)
-    -- breakdown shows `dealt_by` consistently resolving to whatever
-    -- literally delivered the hit across a wide range of attackers
-    -- (fire-flame, flamethrower-fire-stream, both acid entity types,
-    -- biters dealing melee) - the `cause`/`source` split this file
-    -- asserted was real, before ever being checked against real data,
-    -- turned out to hold up. STILL UNCONFIRMED specifically: the
-    -- shot-vs-run-over check kept failing not because of this field
-    -- split, but because DAMAGE_TRACKED_TYPES never included "unit" (see
-    -- above) - a tank hitting a biter was silently dropped entirely, so
-    -- this exact (vehicle cause, unit target) combination has never once
-    -- been recorded to check against. This probe dumps every candidate
-    -- field once per distinct (target unit_number, cause name) pair
-    -- whenever a car/spider-vehicle is the cause, specifically to confirm
-    -- a bare collision really does produce a nil/absent `source` the way
-    -- check_vehicle_combat_credit_diversity assumes. Remove once
-    -- confirmed either way.
+    -- CONFIRMED against the real 2.0.76 on_entity_damaged docs: `cause`
+    -- is "the entity that originally triggered the events that led to
+    -- this damage... (e.g. the character, turret, etc. that pulled the
+    -- trigger)" and `source` is "the entity that is directly dealing the
+    -- damage... (e.g. the projectile, flame, sticker, grenade, laser
+    -- beam, etc.)" - both fields exist, both are nilable (LuaEntity?),
+    -- and both mean exactly what this file already assumed before that
+    -- was ever checked. A nil `source` is therefore an explicitly
+    -- anticipated, normal case per the schema (not something we invented)
+    -- - consistent with a bare physical collision having no discrete
+    -- "delivery mechanism" entity the way a fired weapon does.
+    --
+    -- STILL OPEN: not the field mapping (settled above), but whether a
+    -- real vehicle-vs-unit collision - now actually reachable at all
+    -- since DAMAGE_TRACKED_TYPES gained "unit" above, having always
+    -- silently dropped this exact combination before - really does
+    -- produce a nil source in practice. That's runtime behavior, not
+    -- documentation, so this probe stays for one more real vehicle-
+    -- combat step to confirm it. Remove once confirmed.
     if event.cause and event.cause.valid and (event.cause.type == "car" or event.cause.type == "spider-vehicle") then
         storage.vehicle_damage_probe_seen = storage.vehicle_damage_probe_seen or {}
         local probe_key = tostring(entity.unit_number) .. "/" .. event.cause.name
@@ -544,16 +546,23 @@ local function scan_physical_items(surface, area)
                 -- INVESTIGATING (PR #15): inserter_hand owner_kind has
                 -- never once appeared across three real checklist runs,
                 -- despite step 5's feeder burner-inserter having a real
-                -- pickup source and drop target. A round of this probe
-                -- already ruled out fueling - a real run showed the
-                -- feeder with 500000 J of actively burning fuel and 2
-                -- more coal in reserve, so LuaEntity.insert() is routing
-                -- fuel into a burner entity correctly. held_stack was
-                -- still never once seen valid_for_read though, so this
-                -- adds LuaEntity.status tracking below (the API's own
-                -- purpose-built "why isn't this working" signal) on top
-                -- of the fuel/held-stack checks already here. Remove once
-                -- resolved.
+                -- pickup source and drop target. Ruled out so far:
+                -- fueling (a real run showed 500000 J of actively burning
+                -- fuel and 2 more coal in reserve), pickup/drop reach and
+                -- direction (both confirmed correct - 1 tile for burner
+                -- and plain inserters alike, and step 4's already-passing
+                -- distant-chest test proves the direction convention),
+                -- and how we read the hand itself - CONFIRMED against the
+                -- real 2.0.76 docs that `held_stack`/`valid_for_read`,
+                -- exactly as read below, is the documented, correct way
+                -- to check what an inserter is currently gripping, with
+                -- no caveat about timing/animation phases. So this isn't
+                -- a coding mistake in what we check; something about this
+                -- specific inserter's real runtime state is the open
+                -- question. LuaEntity.status below is the API's own
+                -- purpose-built "why isn't this working" signal, the
+                -- right next thing to check given held_stack itself is
+                -- confirmed fine. Remove once resolved.
                 storage.inserter_hand_probe_seen = storage.inserter_hand_probe_seen or {}
                 local probe_state = storage.inserter_hand_probe_seen[ent.unit_number]
                 if not probe_state then
