@@ -16,25 +16,71 @@
 -- of flamethrower-fire-stream's actual action table, which contains a
 -- literal `type = "create-fire"` entry that this loop successfully flags.
 --
--- CORRECTED (PR #15): a previous round of this comment claimed acid
--- attacks live under data.raw["projectile"] instead of data.raw["stream"],
--- based on a probe reporting "acid-stream-spitter"/"acid-stream-worm" not
--- found under data.raw["stream"]. That was the wrong conclusion - those
--- exact names were never real (real Factorio prototype names carry a size
--- suffix - confirmed against the actual data.raw index the repo owner
--- provided: "acid-stream-spitter-small", "acid-stream-worm-medium", etc.
--- all exist right where they belong, under data.raw["stream"]). The loop
--- below already iterates every prototype in data.raw["stream"]
--- unconditionally (not filtered by name), so it was already calling
--- enable_trigger_created_entity on the real acid stream prototypes the
--- whole time - the table/name mixup was never the actual bug.
---
--- Also also scans "projectile"/"artillery-projectile" as a harmless
--- superset (matches data.lua's own script-trigger injection scope, and
--- would catch any other vanilla/modded prototype using this kind of
--- effect under those categories too) - kept, but it is not what fixes
--- the acid case either.
--- FIXED (post-PR #15, real crash): widening the scan below to
+-- CONFIRMED (PR #15) against the real AttackParameters/AmmoType/Trigger/
+-- TriggerDelivery API docs, resolving the acid case: a data-stage probe
+-- proved data.raw["stream"]["acid-stream-spitter-small" /
+-- "acid-stream-worm-medium"].action is nil - unlike flamethrower-fire-
+-- stream, which sets a real action directly on its own StreamPrototype
+-- (a field the docs confirm exists independently of AttackParameters).
+-- Acid's actual on-hit action lives one level up instead, on the
+-- ATTACKING UNIT's own prototype:
+--   unit.attack_parameters.ammo_type.action        -- Trigger (TriggerItem+)
+--     .action_delivery                             -- TriggerDelivery (e.g. type="stream")
+--       .target_effects                            -- TriggerEffect (TriggerEffectItem+)
+-- the exact same target_effects shape the entity-level scan below already
+-- flags, just reached through a different prototype path. flag_target_effects()
+-- is shared by both paths so "create-fire"/"create-entity" get the same
+-- trigger_created_entity = true treatment either way.
+local function flag_target_effects(context_name, effects)
+    if type(effects) == "table" and not effects[1] then effects = {effects} end
+
+    if type(effects) ~= "table" then
+        log("[replay-recorder] data-updates: " .. context_name .. ".target_effects is a " .. type(effects) .. ", not a table - skipped")
+        return
+    end
+
+    for _, effect in pairs(effects) do
+        if type(effect) ~= "table" then
+            log("[replay-recorder] data-updates: " .. context_name .. " has a non-table target_effects entry (" .. type(effect) .. ") - skipped")
+        -- "create-fire" is confirmed correct (see above). "create-entity"
+        -- is kept as a harmless superset (a real, distinct 2.0.76
+        -- TriggerEffectItem type) - not itself proven necessary for any
+        -- currently-tracked weapon, but costs nothing to also flag.
+        elseif effect.type == "create-fire" or effect.type == "create-entity" then
+            effect.trigger_created_entity = true
+        end
+    end
+end
+
+-- Shared traversal: given something shaped like a TriggerItem
+-- (action.action_delivery -> TriggerDelivery -> target_effects), walk
+-- every level defensively - see the FIXED note below for why every level
+-- needs a type(...) == "table" check rather than assuming array shape.
+local function flag_action(context_name, action)
+    if type(action) ~= "table" then
+        log("[replay-recorder] data-updates: " .. context_name .. " has a non-table action entry (" .. type(action) .. ") - skipped")
+        return
+    end
+    if not action.action_delivery then return end
+
+    local deliveries = action.action_delivery
+    if type(deliveries) == "table" and not deliveries[1] then deliveries = {deliveries} end
+
+    if type(deliveries) ~= "table" then
+        log("[replay-recorder] data-updates: " .. context_name .. ".action_delivery is a " .. type(deliveries) .. ", not a table - skipped")
+        return
+    end
+
+    for _, delivery in pairs(deliveries) do
+        if type(delivery) ~= "table" then
+            log("[replay-recorder] data-updates: " .. context_name .. " has a non-table delivery entry (" .. type(delivery) .. ") - skipped")
+        elseif delivery.target_effects then
+            flag_target_effects(context_name, delivery.target_effects)
+        end
+    end
+end
+
+-- FIXED (post-PR #15, real crash): widening the entity-level scan below to
 -- "projectile"/"artillery-projectile" (on top of "stream") meant this
 -- traversal started running against ~30 vanilla prototypes it had never
 -- actually been exercised on before (atomic bombs, capsules, lasers,
@@ -47,9 +93,7 @@
 -- not a TriggerEffectItem table - PROVING the shape assumption held for
 -- flamethrower does not hold universally. Every level now checks
 -- type(...) == "table" before indexing into it, and logs (rather than
--- silently drops) whichever prototype had the unexpected shape, so a
--- future data-stage log tells us which one it was instead of us needing
--- to guess again.
+-- silently drops) whichever prototype had the unexpected shape.
 local function enable_trigger_created_entity(prototype_name, prototype)
     if not prototype.action then return end
 
@@ -61,53 +105,7 @@ local function enable_trigger_created_entity(prototype_name, prototype)
     end
 
     for _, action in pairs(actions) do
-        if type(action) ~= "table" then
-            log("[replay-recorder] data-updates: " .. prototype_name .. " has a non-table action entry (" .. type(action) .. ") - skipped")
-        elseif action.action_delivery then
-            local deliveries = action.action_delivery
-            if type(deliveries) == "table" and not deliveries[1] then deliveries = {deliveries} end
-
-            if type(deliveries) ~= "table" then
-                log("[replay-recorder] data-updates: " .. prototype_name .. ".action_delivery is a " .. type(deliveries) .. ", not a table - skipped")
-            else
-                for _, delivery in pairs(deliveries) do
-                    if type(delivery) ~= "table" then
-                        log("[replay-recorder] data-updates: " .. prototype_name .. " has a non-table delivery entry (" .. type(delivery) .. ") - skipped")
-                    elseif delivery.target_effects then
-                        local effects = delivery.target_effects
-                        if type(effects) == "table" and not effects[1] then effects = {effects} end
-
-                        if type(effects) ~= "table" then
-                            log("[replay-recorder] data-updates: " .. prototype_name .. ".target_effects is a " .. type(effects) .. ", not a table - skipped")
-                        else
-                            for _, effect in pairs(effects) do
-                                if type(effect) ~= "table" then
-                                    log("[replay-recorder] data-updates: " .. prototype_name .. " has a non-table target_effects entry (" .. type(effect) .. ") - skipped")
-                                -- "create-fire" is confirmed correct (see above).
-                                -- "create-entity" is added as a schema-informed
-                                -- but NOT yet proven extension: the real 2.0.76
-                                -- TriggerEffectItem type list includes both
-                                -- CreateFireTriggerEffectItem and
-                                -- CreateEntityTriggerEffectItem as distinct,
-                                -- equally-real types, and trigger_created_entity
-                                -- conceptually reads as a flag any entity-creating
-                                -- effect could plausibly support, not just the
-                                -- fire-specific one. Since the table/type-string
-                                -- checks are now both confirmed correct and the
-                                -- acid case still doesn't fire, the remaining
-                                -- possibility is that acid's fire-creating effect
-                                -- (if it has one) uses this type instead. Narrow
-                                -- back to just "create-fire" if a real run's probe
-                                -- dump (below) shows acid actually uses neither.
-                                elseif effect.type == "create-fire" or effect.type == "create-entity" then
-                                    effect.trigger_created_entity = true
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
+        flag_action(prototype_name, action)
     end
 end
 
@@ -117,20 +115,41 @@ for _, p_type in pairs({"projectile", "artillery-projectile", "stream"}) do
     end
 end
 
--- CONFIRMING (PR #15): dumps the real action structure for the confirmed-
--- real acid stream prototypes, under the confirmed-real data.raw key
--- ("stream", per the actual data.raw index). This is the one remaining
--- piece nothing else can substitute for - it's prototype DATA, not
--- documented schema, so no API reference page can answer it. Only
--- requires relaunching Factorio with the mod active (data stage runs at
--- startup, before any save loads) - no checklist playthrough needed.
--- Remove once effect_created shows more than one source in a real run.
-local ACID_STREAM_PROBE_NAMES = {"acid-stream-spitter-small", "acid-stream-worm-medium"}
-for _, name in ipairs(ACID_STREAM_PROBE_NAMES) do
-    local stream = data.raw["stream"] and data.raw["stream"][name]
-    if stream then
-        log("[replay-recorder-probe] stream prototype " .. name .. " action=" .. serpent.block(stream.action))
-    else
-        log("[replay-recorder-probe] stream prototype " .. name .. " not found in data.raw['stream']")
+-- Unit-level scan (acid spitters/worms, and anything else whose real
+-- on-hit action lives on attack_parameters.ammo_type.action rather than
+-- on the stream/projectile prototype itself - see the CONFIRMED note
+-- above for the doc-backed path).
+local function enable_trigger_created_entity_for_unit(prototype_name, prototype)
+    local attack_parameters = prototype.attack_parameters
+    if type(attack_parameters) ~= "table" then return end
+
+    local ammo_types = attack_parameters.ammo_type
+    if not ammo_types then return end
+    if type(ammo_types) == "table" and not ammo_types[1] then ammo_types = {ammo_types} end
+
+    if type(ammo_types) ~= "table" then
+        log("[replay-recorder] data-updates: " .. prototype_name .. ".attack_parameters.ammo_type is a " .. type(ammo_types) .. ", not a table - skipped")
+        return
     end
+
+    for _, ammo_type in pairs(ammo_types) do
+        if type(ammo_type) ~= "table" then
+            log("[replay-recorder] data-updates: " .. prototype_name .. " has a non-table ammo_type entry (" .. type(ammo_type) .. ") - skipped")
+        elseif ammo_type.action then
+            local actions = ammo_type.action
+            if type(actions) == "table" and not actions[1] then actions = {actions} end
+
+            if type(actions) ~= "table" then
+                log("[replay-recorder] data-updates: " .. prototype_name .. ".attack_parameters.ammo_type.action is a " .. type(actions) .. ", not a table - skipped")
+            else
+                for _, action in pairs(actions) do
+                    flag_action(prototype_name, action)
+                end
+            end
+        end
+    end
+end
+
+for prototype_name, prototype in pairs(data.raw["unit"] or {}) do
+    enable_trigger_created_entity_for_unit(prototype_name, prototype)
 end

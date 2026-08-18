@@ -476,6 +476,36 @@ for status_name, status_value in pairs(defines.entity_status) do
     ENTITY_STATUS_NAMES[status_value] = status_name
 end
 
+-- CONFIRMED (PR #15): pickup/drop side vs. direction is the documented
+-- convention (drops in the facing direction, picks up from behind), and
+-- step 5's feeder (direction = east, src chest to its west, dst chest to
+-- its east) already matches it - so the geometry ISN'T backwards the way
+-- a prior round of this investigation suspected. What's still unknown is
+-- runtime-only: does LuaEntity.pickup_position actually land inside the
+-- src chest's real collision box for this specific placement, and does
+-- the chest still have items at the moment status reports
+-- waiting_for_source_items? No doc page can answer either - this is exactly
+-- the "relaunch and look at real prototype/runtime data" tier, not a guess
+-- to code around blind. Remove once inserter_hand is confirmed firing.
+local function describe_position_contents(surface, pos)
+    if not pos then return "nil" end
+    local coord = string.format("(%.2f,%.2f)", pos.x, pos.y)
+    local ok, found = pcall(function() return surface.find_entities_filtered{position = pos} end)
+    if not ok or not found or #found == 0 then
+        return coord .. " -> nothing there"
+    end
+    local parts = {}
+    for _, e in ipairs(found) do
+        local desc = e.name
+        if e.valid and (e.type == "container" or e.type == "logistic-container") then
+            local ok_inv, count = pcall(function() return e.get_inventory(defines.inventory.chest).get_item_count() end)
+            desc = desc .. " item_count=" .. (ok_inv and tostring(count) or "ERROR")
+        end
+        table.insert(parts, desc)
+    end
+    return coord .. " -> " .. table.concat(parts, ", ")
+end
+
 local function scan_physical_items(surface, area)
     local entities = surface.find_entities_filtered{area = area, type = PHYSICAL_ITEM_TYPES}
 
@@ -545,6 +575,13 @@ local function scan_physical_items(surface, area)
                     end
                     log("[replay-recorder-probe] inserter first seen: name=" .. ent.name
                         .. " unit_number=" .. ent.unit_number .. " " .. fuel_desc)
+
+                    local ok_pickup, pickup_pos = pcall(function() return ent.pickup_position end)
+                    local ok_drop, drop_pos = pcall(function() return ent.drop_position end)
+                    log("[replay-recorder-probe] inserter pickup/drop: name=" .. ent.name
+                        .. " unit_number=" .. ent.unit_number
+                        .. " pickup=" .. (ok_pickup and describe_position_contents(ent.surface, pickup_pos) or "ERROR")
+                        .. " drop=" .. (ok_drop and describe_position_contents(ent.surface, drop_pos) or "ERROR"))
                 end
 
                 local ok_stack, held = pcall(function() return ent.held_stack end)
@@ -568,6 +605,19 @@ local function scan_physical_items(surface, area)
                         storage.inserter_status_probe_seen[ent.unit_number] = status_name
                         log("[replay-recorder-probe] inserter status changed: name=" .. ent.name
                             .. " unit_number=" .. ent.unit_number .. " status=" .. status_name .. " tick=" .. game.tick)
+
+                        -- Re-check the pickup side's actual contents AT
+                        -- THE MOMENT status flips to waiting_for_source_items -
+                        -- the first_seen dump above only shows the pickup
+                        -- target once, before the inserter has done
+                        -- anything; this shows whether it's really empty
+                        -- by the time the inserter itself gives up on it.
+                        if status_name == "waiting_for_source_items" then
+                            local ok_pickup, pickup_pos = pcall(function() return ent.pickup_position end)
+                            log("[replay-recorder-probe] inserter pickup side at waiting_for_source_items: name=" .. ent.name
+                                .. " unit_number=" .. ent.unit_number
+                                .. " pickup=" .. (ok_pickup and describe_position_contents(ent.surface, pickup_pos) or "ERROR"))
+                        end
                     end
                 end
 
