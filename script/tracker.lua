@@ -69,20 +69,14 @@ function Tracker.on_entity_died(event)
     local entity = event.entity
     if not entity.valid then return end
 
-    -- CONFIRMED (PR #14 probe): on_entity_died never fires for a fire/acid
-    -- patch's time-to-live expiry - a real session with both the
-    -- flamethrower (step 12) and a spitter fight (step 14) produced zero
-    -- on_entity_died lines for any fire-typed entity, despite
-    -- on_trigger_created_entity confirming they were created. effect_expired
-    -- is instead produced via register_on_object_destroyed - see
-    -- on_trigger_created_entity below (where it's registered) and
-    -- TrackerEvents.on_object_destroyed (where it actually fires). This
-    -- branch is kept as a harmless no-op in case some other death path -
-    -- an explosion clearing a patch early, say - ever does route a fire
-    -- entity through on_entity_died after all: without it, a fire "victim"
-    -- would otherwise fall through to the generic death_event/scoring
-    -- logic below, which doesn't make sense for a patch that isn't a
-    -- combat participant.
+    -- on_entity_died never fires for a fire/acid patch's time-to-live
+    -- expiry - effect_expired is produced via register_on_object_destroyed
+    -- instead (see on_trigger_created_entity below). This branch is a
+    -- harmless no-op guard in case some other death path (e.g. an
+    -- explosion clearing a patch early) ever does route a fire entity
+    -- through on_entity_died: without it, a fire "victim" would otherwise
+    -- fall through to the generic death_event/scoring logic below, which
+    -- doesn't make sense for a patch that isn't a combat participant.
     if entity.type == "fire" then
         return
     end
@@ -294,43 +288,19 @@ function Tracker.on_trigger_created_entity(event)
     local entity = event.entity
     if not entity or not entity.valid then return end
 
-    -- INVESTIGATING (PR #15): unconditional, not gated on entity.type -
-    -- effect_created has shown ONLY "flamethrower-turret" as a source
-    -- across every real checklist run so far, even ones with confirmed
-    -- acid damage landing. If a spitter/worm's acid attack creates SOME
-    -- entity via this event (even one whose type isn't "fire"), this
-    -- catches it; if it never fires for acid at all, this stays silent
-    -- for it and data-updates.lua's stream-action probe is the next
-    -- place to look. Remove once resolved.
-    storage.trigger_entity_probe_seen = storage.trigger_entity_probe_seen or {}
-    local probe_key = entity.name .. "/" .. entity.type
-    if not storage.trigger_entity_probe_seen[probe_key] then
-        storage.trigger_entity_probe_seen[probe_key] = true
-        local source_for_probe = event.source
-        log("[replay-recorder-probe] on_trigger_created_entity: name=" .. entity.name .. " type=" .. entity.type
-            .. " source=" .. ((source_for_probe and source_for_probe.valid) and source_for_probe.name or "nil"))
-    end
-
-    -- CONFIRMED (PR #13/#14 probes) for the flamethrower's flame patch:
-    -- entity.type == "fire" on real 2.0.76 data. NOT independently
-    -- confirmed for a spitter/worm's acid - see the investigation note in
-    -- data-updates.lua, which is where that's being chased down now.
-    -- Kept as `~= "fire"` rather than narrowing further since that's
-    -- still the only confirmed shape either patch type could take.
+    -- Both the flamethrower's flame patch and a spitter/worm's acid splash
+    -- are entity.type == "fire" on real 2.0.76 data.
     if entity.type ~= "fire" then return end
 
     local in_zone = CombatZones.notify_and_check(entity.surface, entity.position)
     if not (in_zone or Config.full_recording_mode()) then return end
 
-    -- CONFIRMED (PR #14 probe): on_entity_died never fires for a fire/acid
-    -- patch's time-to-live expiry (see Tracker.on_entity_died's fire
-    -- branch), so effect_expired has to come from register_on_object_
-    -- destroyed instead - the same mechanism TrackerEvents.ground_item_key
-    -- uses for ground items, which fires regardless of WHY the entity
-    -- disappeared. The entity is already gone by the time on_object_
-    -- destroyed fires, so its name/position have to be cached now, at
-    -- creation, in storage.registered_fire_effects - there's nothing left
-    -- to read them off of once the event actually arrives.
+    -- on_entity_died never fires for a fire/acid patch's expiry (see
+    -- Tracker.on_entity_died's fire branch), so effect_expired comes from
+    -- register_on_object_destroyed instead - the same mechanism
+    -- TrackerEvents.ground_item_key uses for ground items. The entity is
+    -- already gone by the time that event fires, so its name/position
+    -- have to be cached now, at creation, in storage.registered_fire_effects.
     local ok, registration_number = pcall(function() return script.register_on_object_destroyed(entity) end)
     if ok then
         storage.registered_fire_effects[registration_number] = {name = entity.name, position = entity.position}
@@ -346,17 +316,10 @@ function Tracker.on_trigger_created_entity(event)
     })
 end
 
--- FIXED (PR #15): "unit"/"unit-spawner" (biters/spitters/worms and their
--- nests as DAMAGE TARGETS, not dealers - they were always fine as a
--- `dealer` value, e.g. "small-biter" already showed up there) were never
--- in this list, so damage dealt TO one was silently dropped regardless of
--- who dealt it. This is more than a checklist-test gap: a real combat
--- replay wants "the tank shot at this biter three times before it died"
--- the same way it wants any other target's damage history, and it's what
--- was actually blocking the vehicle shot-vs-run-over check - shoot_target/
--- run_over_target are both small-biter (type "unit"), so damage_event
--- could never contain a "tank" dealer at all before this, regardless of
--- what the player did.
+-- "unit"/"unit-spawner" (biters/spitters/worms and their nests) need to be
+-- tracked as damage TARGETS here too, not just as `dealer` values - a real
+-- combat replay wants "the tank shot at this biter three times before it
+-- died" the same way it wants any other target's damage history.
 local DAMAGE_TRACKED_TYPES = {
     ["turret"] = true,
     ["ammo-turret"] = true,
@@ -381,23 +344,14 @@ function Tracker.on_entity_damaged(event)
     local in_zone = CombatZones.notify_and_check(entity.surface, entity.position)
     if not (in_zone or Config.full_recording_mode()) then return end
 
-    -- CONFIRMED against the real 2.0.76 on_entity_damaged docs: `cause`
-    -- is "the entity that originally triggered the events that led to
-    -- this damage... (e.g. the character, turret, etc. that pulled the
-    -- trigger)" and `source` is "the entity that is directly dealing the
-    -- damage... (e.g. the projectile, flame, sticker, grenade, laser
-    -- beam, etc.)". CONFIRMED, separately, by a real vehicle-combat probe
-    -- (a tank shooting one target and running over another): a bare
-    -- physical collision does NOT leave `source` nil the way was first
-    -- assumed - it sets `source` to the SAME entity as `cause` (both
-    -- "tank"), since the vehicle itself is "the thing directly dealing
-    -- the damage" when nothing more specific (no projectile/stream) is
-    -- involved. A fired weapon instead sets `source` to that projectile/
-    -- stream's own name (e.g. "cannon-projectile"), distinct from
-    -- `cause`. tools/verify_checklist.py's shot-vs-run-over check now
-    -- distinguishes the two exactly this way (dealt_by == dealer means a
-    -- bare collision; dealt_by naming something else means a weapon hit)
-    -- instead of the wrong nil-vs-set assumption it started with.
+    -- `cause` is the entity that triggered the damage (character, turret,
+    -- vehicle, ...); `source` is what's directly dealing it (a projectile,
+    -- flame, sticker, ...) - for a bare physical collision (e.g. a vehicle
+    -- running something over), `source` equals `cause` rather than being
+    -- nil, since the vehicle itself is "directly dealing" the damage when
+    -- nothing more specific is involved. tools/verify_checklist.py's
+    -- shot-vs-run-over check relies on this: dealt_by == dealer means a
+    -- bare collision, dealt_by naming something else means a weapon hit.
     Exporter.log_event(game.tick, "damage_event", {
         target = entity.name,
         target_type = entity.type,
@@ -464,48 +418,6 @@ end
 -- script/item_chains.lua sample on a slow interval instead.
 local PHYSICAL_ITEM_TYPES = {"container", "logistic-container", "character-corpse", "inserter", "item-entity"}
 
--- INVESTIGATING (PR #15): reverse of defines.entity_status (built once, at
--- load time) so the inserter probe below can log LuaEntity.status as a
--- readable name (e.g. "no_power", "item_ingredient_shortage") instead of
--- a bare number - this is the API's own purpose-built answer to "why
--- isn't this thing working", which fuel/held-stack alone haven't settled
--- for step 5's feeder inserter (confirmed to have active burning fuel,
--- yet never once observed holding an item across three real runs).
-local ENTITY_STATUS_NAMES = {}
-for status_name, status_value in pairs(defines.entity_status) do
-    ENTITY_STATUS_NAMES[status_value] = status_name
-end
-
--- CONFIRMED (PR #15): pickup/drop side vs. direction is the documented
--- convention (drops in the facing direction, picks up from behind), and
--- step 5's feeder (direction = east, src chest to its west, dst chest to
--- its east) already matches it - so the geometry ISN'T backwards the way
--- a prior round of this investigation suspected. What's still unknown is
--- runtime-only: does LuaEntity.pickup_position actually land inside the
--- src chest's real collision box for this specific placement, and does
--- the chest still have items at the moment status reports
--- waiting_for_source_items? No doc page can answer either - this is exactly
--- the "relaunch and look at real prototype/runtime data" tier, not a guess
--- to code around blind. Remove once inserter_hand is confirmed firing.
-local function describe_position_contents(surface, pos)
-    if not pos then return "nil" end
-    local coord = string.format("(%.2f,%.2f)", pos.x, pos.y)
-    local ok, found = pcall(function() return surface.find_entities_filtered{position = pos} end)
-    if not ok or not found or #found == 0 then
-        return coord .. " -> nothing there"
-    end
-    local parts = {}
-    for _, e in ipairs(found) do
-        local desc = e.name
-        if e.valid and (e.type == "container" or e.type == "logistic-container") then
-            local ok_inv, count = pcall(function() return e.get_inventory(defines.inventory.chest).get_item_count() end)
-            desc = desc .. " item_count=" .. (ok_inv and tostring(count) or "ERROR")
-        end
-        table.insert(parts, desc)
-    end
-    return coord .. " -> " .. table.concat(parts, ", ")
-end
-
 local function scan_physical_items(surface, area)
     local entities = surface.find_entities_filtered{area = area, type = PHYSICAL_ITEM_TYPES}
 
@@ -539,88 +451,6 @@ local function scan_physical_items(surface, area)
             if ent.type == "container" or ent.type == "logistic-container" then
                 TrackerEvents.log_inventory_delta("container_" .. ent.unit_number, "container", TrackerEvents.container_contents(ent))
             elseif ent.type == "inserter" then
-                -- INVESTIGATING (PR #15): inserter_hand owner_kind has
-                -- never once appeared across three real checklist runs,
-                -- despite step 5's feeder burner-inserter having a real
-                -- pickup source and drop target. Ruled out so far:
-                -- fueling (a real run showed 500000 J of actively burning
-                -- fuel and 2 more coal in reserve), pickup/drop reach and
-                -- direction (both confirmed correct - 1 tile for burner
-                -- and plain inserters alike, and step 4's already-passing
-                -- distant-chest test proves the direction convention),
-                -- and how we read the hand itself - CONFIRMED against the
-                -- real 2.0.76 docs that `held_stack`/`valid_for_read`,
-                -- exactly as read below, is the documented, correct way
-                -- to check what an inserter is currently gripping, with
-                -- no caveat about timing/animation phases. So this isn't
-                -- a coding mistake in what we check; something about this
-                -- specific inserter's real runtime state is the open
-                -- question. LuaEntity.status below is the API's own
-                -- purpose-built "why isn't this working" signal, the
-                -- right next thing to check given held_stack itself is
-                -- confirmed fine. Remove once resolved.
-                storage.inserter_hand_probe_seen = storage.inserter_hand_probe_seen or {}
-                local probe_state = storage.inserter_hand_probe_seen[ent.unit_number]
-                if not probe_state then
-                    storage.inserter_hand_probe_seen[ent.unit_number] = "first_seen"
-                    local ok_burner, burner = pcall(function() return ent.burner end)
-                    local fuel_desc = "no_burner"
-                    if ok_burner and burner then
-                        local ok_remaining, remaining = pcall(function() return burner.remaining_burning_fuel end)
-                        local ok_inv, contents = pcall(function() return burner.inventory and burner.inventory.get_contents() end)
-                        fuel_desc = "remaining_burning_fuel=" .. (ok_remaining and tostring(remaining) or "ERROR")
-                            .. " fuel_inventory=" .. (ok_inv and serpent.line(contents) or "ERROR")
-                    elseif not ok_burner then
-                        fuel_desc = "burner_read_ERROR(" .. tostring(burner) .. ")"
-                    end
-                    log("[replay-recorder-probe] inserter first seen: name=" .. ent.name
-                        .. " unit_number=" .. ent.unit_number .. " " .. fuel_desc)
-
-                    local ok_pickup, pickup_pos = pcall(function() return ent.pickup_position end)
-                    local ok_drop, drop_pos = pcall(function() return ent.drop_position end)
-                    log("[replay-recorder-probe] inserter pickup/drop: name=" .. ent.name
-                        .. " unit_number=" .. ent.unit_number
-                        .. " pickup=" .. (ok_pickup and describe_position_contents(ent.surface, pickup_pos) or "ERROR")
-                        .. " drop=" .. (ok_drop and describe_position_contents(ent.surface, drop_pos) or "ERROR"))
-                end
-
-                local ok_stack, held = pcall(function() return ent.held_stack end)
-                if ok_stack and held and held.valid_for_read and probe_state ~= "held_seen" then
-                    storage.inserter_hand_probe_seen[ent.unit_number] = "held_seen"
-                    log("[replay-recorder-probe] inserter hand non-empty: name=" .. ent.name
-                        .. " unit_number=" .. ent.unit_number .. " item=" .. held.name .. " count=" .. held.count)
-                end
-
-                -- LuaEntity.status is the API's own designed answer to
-                -- "why isn't this thing working" (no_power, waiting on
-                -- ingredients, disabled, ...) - logged on every CHANGE
-                -- (not every tick) so a burner-inserter's real state
-                -- transitions over its whole 10-second window show up as
-                -- a short, readable timeline instead of one snapshot.
-                storage.inserter_status_probe_seen = storage.inserter_status_probe_seen or {}
-                local ok_status, status = pcall(function() return ent.status end)
-                if ok_status and status ~= nil then
-                    local status_name = ENTITY_STATUS_NAMES[status] or ("unknown(" .. tostring(status) .. ")")
-                    if storage.inserter_status_probe_seen[ent.unit_number] ~= status_name then
-                        storage.inserter_status_probe_seen[ent.unit_number] = status_name
-                        log("[replay-recorder-probe] inserter status changed: name=" .. ent.name
-                            .. " unit_number=" .. ent.unit_number .. " status=" .. status_name .. " tick=" .. game.tick)
-
-                        -- Re-check the pickup side's actual contents AT
-                        -- THE MOMENT status flips to waiting_for_source_items -
-                        -- the first_seen dump above only shows the pickup
-                        -- target once, before the inserter has done
-                        -- anything; this shows whether it's really empty
-                        -- by the time the inserter itself gives up on it.
-                        if status_name == "waiting_for_source_items" then
-                            local ok_pickup, pickup_pos = pcall(function() return ent.pickup_position end)
-                            log("[replay-recorder-probe] inserter pickup side at waiting_for_source_items: name=" .. ent.name
-                                .. " unit_number=" .. ent.unit_number
-                                .. " pickup=" .. (ok_pickup and describe_position_contents(ent.surface, pickup_pos) or "ERROR"))
-                        end
-                    end
-                end
-
                 TrackerEvents.log_inventory_delta("inserter_" .. ent.unit_number, "inserter_hand", TrackerEvents.held_stack_contents(ent))
             end
         end

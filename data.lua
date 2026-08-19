@@ -15,21 +15,11 @@
 -- which is how the mod tracks combat without polling every projectile in
 -- the game on every tick.
 
--- HARDENED (post-PR #15): a duplicate of this same actions/deliveries
--- wrapping pattern in data-updates.lua crashed the game entirely -
--- "attempt to index local 'effect' (a boolean value)" - once its scan was
--- widened to cover this same "projectile"/"artillery-projectile"/"stream"
--- set: some prototype among the ~30+ vanilla types in there (atomic
--- bombs, capsules, lasers, ...) has an action/delivery/effects shape this
--- pattern's original wrapping logic didn't anticipate, since it had only
--- ever actually been exercised against the flamethrower's stream before.
--- This function has been scanning the exact same prototype set since the
--- mod's first version and hasn't crashed here (data-updates.lua runs
--- AFTER this file, and the crash was there, not here) - but that's meant
--- purely that no loaded prototype has happened to break it yet, not that
--- the pattern was actually safe. Every level now checks type(...) ==
--- "table" before indexing into it, same as the now-fixed copy in
--- data-updates.lua.
+-- Every level checks type(...) == "table" before indexing into it - some
+-- vanilla prototypes (atomic bombs, capsules, lasers, ...) have an
+-- action/delivery/effects shape this wrapping logic doesn't expect, and
+-- pairs() over those can yield a non-table value that would otherwise
+-- crash the data stage entirely.
 local function inject_script_trigger(prototype)
     if not prototype.action then return end
 

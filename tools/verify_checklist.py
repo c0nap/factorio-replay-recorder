@@ -198,13 +198,11 @@ def check_vehicle_combat_credit_diversity(events):
     with dealer=tank, is what actually confirms both mechanisms fired
     instead of one masking the other.
 
-    CORRECTED: this used to require dealt_by to be nil/absent for the
-    collision case. A real on_entity_damaged probe proved that's wrong -
-    a bare vehicle collision reports BOTH cause AND source as the vehicle
-    itself (dealer=tank, dealt_by=tank), never a nil dealt_by. The real
-    distinguishing signal is whether dealt_by names a DIFFERENT entity
-    (a fired projectile/stream - the "shot" case) or the same entity as
-    the dealer (a bare collision, nothing more specific "dealt" it)."""
+    A bare vehicle collision reports BOTH cause and source as the vehicle
+    itself (dealer=tank, dealt_by=tank), never a nil dealt_by, so the
+    distinguishing signal is whether dealt_by names a DIFFERENT entity (a
+    fired projectile/stream - the "shot" case) or the same entity as the
+    dealer (a bare collision, nothing more specific "dealt" it)."""
     shot = False
     ran_over = False
     for e in events:
