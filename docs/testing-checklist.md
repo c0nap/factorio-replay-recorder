@@ -24,8 +24,9 @@ just enemies.
 ## Before you start
 
 1. **Install the mod.** Copy this repo's contents into a folder named
-   `factorio-replay-recorder_0.1.0` (matching `info.json`) inside your
-   Factorio `mods` directory - see the README's install section.
+   `replay-recorder_0.1.0` (matching `info.json`) inside your Factorio
+   `mods` directory - see the README's [Installation](../README.md#installation)
+   section.
 2. **Start a new save.** Pick a spawn with a reasonably large flat/land
    area if you can - step 1 below clears trees near you, but not water,
    and a scripted `create_entity` on a water tile can silently fail to
@@ -437,49 +438,11 @@ python3 tools/inspect_logs.py
 
 ---
 
-## Not covered by this checklist (future work)
+## Not covered by this checklist
 
-Noted rather than silently skipped:
-
-* **Landmines** - not confirmed whether this mod tracks them at all
-  (damage attribution, or even placement).
-* **Flame damage attribution** - step 12 confirms a fire patch is created
-  and later fades (`effect_created`/`effect_expired`), but not whether
-  standing in it generates its own `damage_event`s against whoever's in
-  it, the way a direct hit does, or whether fire damage bypasses that
-  path entirely.
-* **Capsules** - poison capsules, slowdown capsules, and defender/
-  distractor/destroyer combat robots thrown by the player aren't exercised
-  anywhere in this checklist; unconfirmed whether their effects/spawned
-  units are tracked the way turret and unit-group activity are.
-* **Terrain/obstacle completeness** - trees, rocks, cliffs, and plain
-  ground/water tiles aren't currently distinguished as combat-relevant
-  obstacles the way buildings are; neither are other non-combat buildings
-  (assemblers, furnaces, etc.) beyond being generically dumped as
-  `statics` if not filtered out. Their *contents* don't matter (they're
-  obstacles, not storage), just their presence/position for pathing and
-  chokepoint analysis.
-* **Electricity** - laser turrets, (non-burner) inserters, pumps, and
-  roboports all need a real electric network to actually operate, which
-  this checklist doesn't wire up anywhere. Gun and flamethrower turrets
-  are ammo/fluid-powered so they're unaffected, and steps 4/6 (the
-  distant inserter and roboport tests) only depend on static
-  position/target-resolution properties rather than anything requiring
-  power to be flowing - but it's unconfirmed whether that holds for
-  everything else these unpowered entities are asked to do here.
-* **Laser turrets** - not exercised anywhere in this checklist (they need
-  the electric network above to fire); unconfirmed whether their damage/
-  destruction is tracked the same way gun/flamethrower turrets are.
-* **Health regeneration** - neither the player's natural health
-  regeneration nor biters' (both passive, no item/action involved)
-  produce any event here; unconfirmed whether either is tracked at all,
-  or how it'd be distinguished from healing-item/repair-pack effects if
-  so.
-* **Repairs** - repair packs (player-applied) and construction bots
-  (automatic, for player-force structures) aren't exercised anywhere;
-  unconfirmed whether a repaired entity's health increase is tracked as
-  its own event or is indistinguishable from any other health change.
-* **Status effects** - a player gooed/slowed by spitter acid, and a biter
-  slowed by a thrown slowdown capsule, aren't exercised anywhere;
-  unconfirmed whether either is tracked as a distinct event or state, as
-  opposed to just the damage_event from the acid hit itself.
+This checklist covers everything the 0.1 release tracks. Known gaps
+(landmines, flame damage attribution, capsules, terrain/obstacle
+completeness, electricity, laser turrets, health regeneration, repairs,
+status effects) are tracked as roadmap items in
+[`changelog.md`](../changelog.md) instead of here, so there's one place
+that says what's planned rather than two.

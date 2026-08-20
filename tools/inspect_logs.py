@@ -229,7 +229,7 @@ def _context_suffix(sample):
 
 def print_report(samples, malformed, top_n, streak_threshold_ms):
     print("=" * 70)
-    print("Factorio Replay Recorder - performance diagnostics summary")
+    print("Replay Recorder - performance diagnostics summary")
     print("=" * 70)
 
     if not samples:

@@ -279,7 +279,7 @@ def run_checks(events):
 
 def print_report(results):
     print("=" * 70)
-    print("Factorio Replay Recorder - checklist verification")
+    print("Replay Recorder - checklist verification")
     print("=" * 70)
 
     for name, step, passed, detail in results:
