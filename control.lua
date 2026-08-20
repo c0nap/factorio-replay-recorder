@@ -69,26 +69,47 @@ end)
 script.on_event(defines.events.on_tick, function()
     local diag = Diagnostics.start_tick()
 
-    -- Flushes on the fixed interval as usual, but also early whenever the
-    -- buffer has grown past Config.max_buffered_events() - e.g. during a
-    -- full-recording backfill burst, where several chunk_snapshot events/
-    -- tick would otherwise all pile up for a full flush_interval_ticks
-    -- before the first flush call ever ran. Exporter.flush() itself caps
-    -- how much it writes per call to that same limit, so this can fire on
-    -- consecutive ticks to drain a large backlog in several small writes
-    -- instead of waiting one at a time.
+    -- Full recording mode's backfill queue and the write it eventually
+    -- triggers are the two heaviest things this mod ever does in one
+    -- tick - CombatZones.process_backfill_queue()'s per-chunk tile/static/
+    -- logistics scans, and Exporter.flush() serializing the resulting
+    -- chunk_snapshot events. A PREVIOUS fix here just reordered the flush
+    -- check to run before the backfill/scan work below, reasoning that a
+    -- tick whose scan crossed the buffer threshold would pay for the
+    -- write on the NEXT tick instead of the same one. That reasoning was
+    -- wrong: Factorio runs on_tick as one atomic, uninterruptible unit of
+    -- work per game tick, so anything that happens inside it - regardless
+    -- of what order it happens in - still lands in the same single
+    -- stutter. Real diagnostics data confirmed this directly: the worst
+    -- ticks after that "fix" still showed a large scan_time AND a large
+    -- write_time together (up to 365ms total on one tick).
     --
-    -- Deliberately checked BEFORE this tick's own backfill/scan work below,
-    -- against whatever's left over from earlier ticks - real diagnostics
-    -- data showed that checking it AFTER (the previous ordering) let a
-    -- single tick's heavy backfill scan and the write it triggered stack
-    -- into one frame, producing ticks over 450ms during a full-recording
-    -- burst. Checking the carried-over buffer first instead means a tick
-    -- whose own scan pushes the buffer over the threshold pays for that
-    -- write NEXT tick, not the same one - halving the worst-case single-
-    -- frame cost instead of just shrinking it.
+    -- The actual fix is to never let both happen on the same tick at all.
+    -- While the backfill queue has anything left in it, this alternates:
+    -- even ticks drain the backfill queue and skip the threshold-flush
+    -- check below; odd ticks skip the backfill queue and run the
+    -- threshold-flush check instead. This halves the backfill's drain
+    -- rate while it's actively running, in exchange for genuinely never
+    -- stacking a scan and a write into one frame - the fixed-interval
+    -- flush is unaffected by this (see its own staggering below), since
+    -- landing on a backfill tick just defers it one tick, same as any
+    -- other skipped check.
+    local backfill_pending = storage.pending_backfill and #storage.pending_backfill > 0
+    local is_backfill_tick = backfill_pending and (game.tick % 2 == 0)
+
+    -- The fixed-interval trigger is offset by half its own period rather
+    -- than checked at game.tick % interval == 0 directly: the checklist
+    -- (and plenty of real configs) sets the distant-sample interval to
+    -- the same period as the flush interval, so an unstaggered flush
+    -- would land on the exact same tick as Logistics/ItemChains/
+    -- FluidChains.tick() below every single time, compounding two
+    -- separate periodic costs instead of spreading them out - visible in
+    -- real data as repeated ~15-30ms streaks outside the backfill burst.
+    local flush_interval = Config.flush_interval_ticks()
+    local on_fixed_interval = (game.tick + math.floor(flush_interval / 2)) % flush_interval == 0
+
     local write_profiler = nil
-    if game.tick % Config.flush_interval_ticks() == 0 or #storage.replay_buffer >= Config.max_buffered_events() then
+    if not is_backfill_tick and (on_fixed_interval or #storage.replay_buffer >= Config.max_buffered_events()) then
         write_profiler = Diagnostics.start_write(diag)
         Exporter.flush()
         if write_profiler then write_profiler.stop() end
@@ -96,10 +117,11 @@ script.on_event(defines.events.on_tick, function()
 
     Diagnostics.start_scan(diag)
 
-    -- Drains a bounded number of chunks/tick from full recording mode's
-    -- backfill queue (see CombatZones.queue_full_recording_backfill) - a
-    -- no-op cost once the queue is empty, which is the common case.
-    CombatZones.process_backfill_queue()
+    -- A no-op cost once the queue is empty (the common case) or on a tick
+    -- skipped by the alternation above.
+    if not backfill_pending or is_backfill_tick then
+        CombatZones.process_backfill_queue()
+    end
 
     CombatZones.tick()
     Tracker.tick()

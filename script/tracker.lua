@@ -69,20 +69,14 @@ function Tracker.on_entity_died(event)
     local entity = event.entity
     if not entity.valid then return end
 
-    -- CONFIRMED (PR #14 probe): on_entity_died never fires for a fire/acid
-    -- patch's time-to-live expiry - a real session with both the
-    -- flamethrower (step 12) and a spitter fight (step 14) produced zero
-    -- on_entity_died lines for any fire-typed entity, despite
-    -- on_trigger_created_entity confirming they were created. effect_expired
-    -- is instead produced via register_on_object_destroyed - see
-    -- on_trigger_created_entity below (where it's registered) and
-    -- TrackerEvents.on_object_destroyed (where it actually fires). This
-    -- branch is kept as a harmless no-op in case some other death path -
-    -- an explosion clearing a patch early, say - ever does route a fire
-    -- entity through on_entity_died after all: without it, a fire "victim"
-    -- would otherwise fall through to the generic death_event/scoring
-    -- logic below, which doesn't make sense for a patch that isn't a
-    -- combat participant.
+    -- on_entity_died never fires for a fire/acid patch's time-to-live
+    -- expiry - effect_expired is produced via register_on_object_destroyed
+    -- instead (see on_trigger_created_entity below). This branch is a
+    -- harmless no-op guard in case some other death path (e.g. an
+    -- explosion clearing a patch early) ever does route a fire entity
+    -- through on_entity_died: without it, a fire "victim" would otherwise
+    -- fall through to the generic death_event/scoring logic below, which
+    -- doesn't make sense for a patch that isn't a combat participant.
     if entity.type == "fire" then
         return
     end
@@ -294,24 +288,19 @@ function Tracker.on_trigger_created_entity(event)
     local entity = event.entity
     if not entity or not entity.valid then return end
 
-    -- CONFIRMED (PR #13/#14 probes): a flamethrower's flame patch and a
-    -- spitter/worm's acid patch are both entity.type == "fire" on real
-    -- 2.0.76 data, and data-updates.lua's trigger_created_entity flag is
-    -- what makes this event fire for them at all.
+    -- Both the flamethrower's flame patch and a spitter/worm's acid splash
+    -- are entity.type == "fire" on real 2.0.76 data.
     if entity.type ~= "fire" then return end
 
     local in_zone = CombatZones.notify_and_check(entity.surface, entity.position)
     if not (in_zone or Config.full_recording_mode()) then return end
 
-    -- CONFIRMED (PR #14 probe): on_entity_died never fires for a fire/acid
-    -- patch's time-to-live expiry (see Tracker.on_entity_died's fire
-    -- branch), so effect_expired has to come from register_on_object_
-    -- destroyed instead - the same mechanism TrackerEvents.ground_item_key
-    -- uses for ground items, which fires regardless of WHY the entity
-    -- disappeared. The entity is already gone by the time on_object_
-    -- destroyed fires, so its name/position have to be cached now, at
-    -- creation, in storage.registered_fire_effects - there's nothing left
-    -- to read them off of once the event actually arrives.
+    -- on_entity_died never fires for a fire/acid patch's expiry (see
+    -- Tracker.on_entity_died's fire branch), so effect_expired comes from
+    -- register_on_object_destroyed instead - the same mechanism
+    -- TrackerEvents.ground_item_key uses for ground items. The entity is
+    -- already gone by the time that event fires, so its name/position
+    -- have to be cached now, at creation, in storage.registered_fire_effects.
     local ok, registration_number = pcall(function() return script.register_on_object_destroyed(entity) end)
     if ok then
         storage.registered_fire_effects[registration_number] = {name = entity.name, position = entity.position}
@@ -327,6 +316,10 @@ function Tracker.on_trigger_created_entity(event)
     })
 end
 
+-- "unit"/"unit-spawner" (biters/spitters/worms and their nests) need to be
+-- tracked as damage TARGETS here too, not just as `dealer` values - a real
+-- combat replay wants "the tank shot at this biter three times before it
+-- died" the same way it wants any other target's damage history.
 local DAMAGE_TRACKED_TYPES = {
     ["turret"] = true,
     ["ammo-turret"] = true,
@@ -339,6 +332,8 @@ local DAMAGE_TRACKED_TYPES = {
     ["spider-vehicle"] = true,
     ["locomotive"] = true,
     ["artillery-wagon"] = true,
+    ["unit"] = true,
+    ["unit-spawner"] = true,
 }
 
 function Tracker.on_entity_damaged(event)
@@ -349,10 +344,14 @@ function Tracker.on_entity_damaged(event)
     local in_zone = CombatZones.notify_and_check(entity.surface, entity.position)
     if not (in_zone or Config.full_recording_mode()) then return end
 
-    -- `cause` is who's responsible (the character/turret/biter that pulled
-    -- the trigger); `source` is what's literally dealing the damage right
-    -- now (the projectile/flame/sticker/laser beam it fired). Keeping both
-    -- gives a viewer the full chain instead of just "something hit this".
+    -- `cause` is the entity that triggered the damage (character, turret,
+    -- vehicle, ...); `source` is what's directly dealing it (a projectile,
+    -- flame, sticker, ...) - for a bare physical collision (e.g. a vehicle
+    -- running something over), `source` equals `cause` rather than being
+    -- nil, since the vehicle itself is "directly dealing" the damage when
+    -- nothing more specific is involved. tools/verify_checklist.py's
+    -- shot-vs-run-over check relies on this: dealt_by == dealer means a
+    -- bare collision, dealt_by naming something else means a weapon hit.
     Exporter.log_event(game.tick, "damage_event", {
         target = entity.name,
         target_type = entity.type,

@@ -6,17 +6,8 @@
 -- pipe network outward from there the same way item_chains follows belts
 -- and inserters.
 --
--- CONFIRMED (PR #13/#14) against real 2.0.76 data: fluid methods live on
--- `entity.fluidbox` (a LuaFluidBox wrapper), not on LuaEntity directly -
--- the previous LuaEntity-level methods (get_fluid_box_neighbours/
--- has_fluid_segment/get_fluid_segment_fluid) errored with "LuaEntity
--- doesn't contain key ..." on this Factorio version even though they
--- matched docs fetched for a different one. A live probe against a real
--- fluid-filled tank confirmed this exact shape, and the checklist's
--- distant-fluid-chain step now passes end to end (`fluid_delta` recorded
--- with fluid actually flowing through it).
---
--- Confirmed shape:
+-- Fluid methods live on `entity.fluidbox` (a LuaFluidBox wrapper), not on
+-- LuaEntity directly, on real 2.0.76 data:
 --   entity.fluidbox[index]                    -> {name, amount, temperature} or nil
 --   entity.fluidbox.get_connections(index)     -> array of LuaFluidBox (connected boxes, not entities)
 --   connected_box.owner                        -> the LuaEntity that box belongs to

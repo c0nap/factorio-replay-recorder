@@ -78,7 +78,7 @@ data:extend({
         type = "int-setting",
         name = "rrec-chunk-backfill-per-tick",
         setting_type = "runtime-global",
-        default_value = 3,
+        default_value = 2,
         minimum_value = 1,
         maximum_value = 500,
         order = "i"
@@ -110,7 +110,7 @@ data:extend({
         type = "int-setting",
         name = "rrec-max-buffered-events",
         setting_type = "runtime-global",
-        default_value = 3,
+        default_value = 2,
         minimum_value = 1,
         maximum_value = 1000,
         order = "m"

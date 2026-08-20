@@ -193,27 +193,35 @@ def check_acid_source_diversity(events):
 
 def check_vehicle_combat_credit_diversity(events):
     """Step 16: the tank should credit damage two different ways - a
-    dealt_by projectile for the shot target, and no dealt_by (a bare
-    collision) for the run-over target. Checking for both, rather than
-    just any damage_event with dealer=tank, is what actually confirms
-    both mechanisms fired instead of one masking the other."""
+    dealt_by projectile for the shot target, and a bare collision for the
+    run-over target. Checking for both, rather than just any damage_event
+    with dealer=tank, is what actually confirms both mechanisms fired
+    instead of one masking the other.
+
+    A bare vehicle collision reports BOTH cause and source as the vehicle
+    itself (dealer=tank, dealt_by=tank), never a nil dealt_by, so the
+    distinguishing signal is whether dealt_by names a DIFFERENT entity (a
+    fired projectile/stream - the "shot" case) or the same entity as the
+    dealer (a bare collision, nothing more specific "dealt" it)."""
     shot = False
     ran_over = False
     for e in events:
         if e.get("type") != "damage_event":
             continue
         data = e.get("data", {})
-        if data.get("dealer") != "tank":
+        dealer = data.get("dealer")
+        dealt_by = data.get("dealt_by")
+        if dealer != "tank" or not dealt_by:
             continue
-        if data.get("dealt_by"):
-            shot = True
-        else:
+        if dealt_by == dealer:
             ran_over = True
+        else:
+            shot = True
 
     if not shot:
-        return False, "no damage_event dealt by the tank via a projectile (dealt_by set) - the shot target"
+        return False, "no damage_event dealt by the tank via a projectile (dealt_by != dealer) - the shot target"
     if not ran_over:
-        return False, "no damage_event dealt by the tank with no dealt_by (a bare collision) - the run-over target"
+        return False, "no damage_event dealt by the tank as a bare collision (dealt_by == dealer) - the run-over target"
     return True, "saw both a projectile-dealt hit and a bare collision credited to the tank"
 
 
