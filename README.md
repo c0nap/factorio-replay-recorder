@@ -257,15 +257,10 @@ FACTS TO STOP RE-DISCOVERING:
 - This mod targets Factorio 2.0.76 specifically, not 2.1 ("latest") - 2.1
   changed parts of this API. Every lua-api.factorio.com link MUST read
   https://lua-api.factorio.com/2.0.76/... - never .../latest/...
-- You (the agent) cannot fetch lua-api.factorio.com yourself - outbound
+- You (the agent) are unable to fetch lua-api.factorio.com yourself - outbound
   access to it is blocked in this environment. You cannot verify a class
   property, event field, or prototype type against the real docs on your
   own, no matter how confident you feel about it from training data.
-- Prototype NAMES almost always carry a size/variant suffix you will not
-  guess correctly from memory (e.g. "acid-stream-spitter-small", not
-  "acid-stream-spitter") - a probe or claim that says "X not found" is
-  at least as likely to mean "wrong name" as "wrong category". Don't
-  conclude the latter without checking the former first.
 
 THE COST ORDER - cheapest first, use the cheapest tool that can actually
 answer the question:
@@ -287,7 +282,7 @@ answer the question:
    actual DATA, not schema (a specific vanilla prototype's real field
    values, e.g. a stream's real action table) - lua-api.factorio.com
    documents the FORMAT prototypes can take, never the actual values
-   vanilla uses, so no doc lookup can substitute here. Still much cheaper
+   vanilla uses, so no doc lookup can substitute here. Still slightly cheaper
    than an in-game session: no save load, no combat, just launching
    Factorio with the mod active.
 4. A full manual checklist playthrough (docs/testing-checklist.md) - only
@@ -303,9 +298,7 @@ already exists before proposing a fix, and say plainly which parts are now
 confirmed vs. which remain open. A "CONFIRMED" comment in this codebase
 must be backed by either real doc text someone actually pasted back, or
 real log/probe output someone actually observed - never by "it's confirmed
-for case A, so it probably also holds for case B" (this project's own
-history has at least one real bug that shipped from exactly that shortcut -
-grep this repo's git log for "acid" if you want the full story). If you
+for case A, so it probably also holds for case B". If you
 aren't sure whether something is confirmed or assumed, say assumed.
 -->
 

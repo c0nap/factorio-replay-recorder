@@ -38,7 +38,7 @@ just enemies.
 ```
 /c game.player.cheat_mode=true
 ```
-Type this one twice - Factorio's misfire guard on the first console
+Type this command twice - Factorio has a misfire guard for the first console
 command of a session.
 ```
 /c game.player.force.research_all_technologies(); game.speed=3; settings.global["rrec-combat-radius"] = {value = 100}; settings.global["rrec-distant-sample-interval-seconds"] = {value = 1}; settings.global["rrec-chain-near-hops"] = {value = 1}; settings.global["rrec-chain-max-hops"] = {value = 50}; settings.global["rrec-chunk-backfill-per-tick"] = {value = 2}; settings.global["rrec-max-buffered-events"] = {value = 2}; settings.global["rrec-diagnostics-enabled"] = {value = true}; settings.global["rrec-battlefield-marker-enabled"] = {value = true}
@@ -257,13 +257,7 @@ Fully scripted, no action required.
 ```
 /c local p = game.player.position; local surface = game.player.surface; local weak_tank = surface.create_entity{name="tank", position={p.x + 40, p.y - 40}, force="player"}; weak_tank.health = 1; surface.create_entity{name="behemoth-biter", position={p.x + 42, p.y - 40}, force="enemy"}; surface.create_entity{name="car", position={p.x + 46, p.y - 40}, force="player"}
 ```
-Wait ~5 seconds. Real playtesting showed a small-biter's attacks never
-actually dropping the tank's health from 1, even after 10+ seconds of
-uninterrupted hits - most likely the "tank" vehicle prototype has enough
-built-in damage resistance to reduce a small-biter's weak attack to near
-zero (unconfirmed - flagging the hypothesis rather than asserting it).
-Upgraded to a behemoth-biter, whose attack is large enough to guarantee
-the one-hit kill regardless of the exact mechanism.
+Wait ~5 seconds.
 
 **Cleanup:** clear the biter:
 ```
@@ -344,9 +338,9 @@ one here too.)
 **Action:** Get in the tank (walk up to it and press **Enter**). From
 inside, shoot the biter on your **left/west** (`shoot_target`) with the
 cannon, then drive the tank directly over the biter on your **right/east**
-(`run_over_target`) - a real collision, not a near miss. Both credits (a
+(`run_over_target`). Both credits (a
 fired-projectile hit and a bare collision) are required for the check
-below to pass, so don't skip the run-over.
+below to pass.
 
 ## 17. Spidertron autopilot
 
