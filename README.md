@@ -14,7 +14,7 @@ That data is designed to be ingested by standalone desktop visualizers, so you c
 ## Features
 
 * **Smart Spatial Cropping:** Recording only turns on for a chunk once a player (on foot, driving, or piloting a vehicle) is actually within range of a fight there. Idle bases and biters that never see a player are never recorded.
-* **Sports-Style Scoring:** Player and vehicle deaths are logged as `score_update` events, with a running per-force death count - think of it as the "goal" in a sports replay. `player_respawn` marks the moment play resumes.
+* **Force-Attributed Deaths:** Player and vehicle deaths are always logged as `death_event`s naming the victim's force and, when known, the killer's - `player_respawn` marks the moment play resumes.
 * **Environmental Context:** The first time a chunk becomes relevant, its tiles (water, landfill, concrete, ...) and every building on it (walls, every turret type, nests, and anything else standing there) are dumped once, so a viewer can render the battlefield without re-recording it on every subsequent skirmish.
 * **Event-Driven Tracking:** Projectile/stream impacts, fire and acid patches appearing and expiring, inventory changes, and belt contents are all recorded as diffs or one-shot events rather than by polling everything every tick.
 * **AI Grouping:** Nests captured in a snapshot are clustered into rough "bases" by proximity; biters/spitters report the `unit_group` they belong to and, individually, the specific spawner they hatched from, so a viewer can render an attack/expansion party or a nest's offspring as one object.
@@ -188,8 +188,8 @@ isn't something a headless CI job can easily stand in for. Instead:
   ```
 * [`tools/inspect_replay.py`](tools/inspect_replay.py) is a general-purpose
   summary for anything not tied to the checklist - event counts, tick
-  range, battlefield count/duration/bounding box, scoreboard, kills by
-  kind/size, and a sample payload per event type:
+  range, battlefield count/duration/bounding box, deaths by force, kills
+  by kind/size, and a sample payload per event type:
   ```
   python3 tools/inspect_replay.py
   ```

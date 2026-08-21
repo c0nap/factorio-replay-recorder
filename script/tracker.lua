@@ -12,26 +12,15 @@ local Keys = require("script.keys")
 
 local Tracker = {}
 
--- Entities whose death should be scored like a "goal against" their force -
--- the sports-scoreboard framing from the design doc. A vehicle counts too
--- (its "demolition" ends the fight for whoever was riding it), but an empty
--- vehicle wreck does not - only entities that fielded a player at some
--- point are worth putting on the scoreboard.
-local function is_scoreable_kind(entity_type)
+-- Entity types worth recording a death_event for even outside an active
+-- zone (see the `always_record` check in on_entity_died below) - a vehicle
+-- counts too (its "demolition" ends the fight for whoever was riding it),
+-- but an empty vehicle wreck does not. Keeping score/a running death tally
+-- isn't this mod's job; death_event's own victim.force/killer.force fields
+-- already carry the force attribution a downstream tool needs to compute
+-- that itself, so these deaths just need to reliably show up in the file.
+local function is_always_recorded_kind(entity_type)
     return entity_type == "character" or entity_type == "car" or entity_type == "spider-vehicle"
-end
-
-local function record_score_event(entity, killer_data)
-    storage.stats.deaths[entity.force.name] = (storage.stats.deaths[entity.force.name] or 0) + 1
-
-    Exporter.log_event(game.tick, "score_update", {
-        force = entity.force.name,
-        entity = entity.name,
-        entity_type = entity.type,
-        position = entity.position,
-        killer = killer_data,
-        deaths_this_force = storage.stats.deaths[entity.force.name]
-    })
 end
 
 local function record_kill_stat(entity)
@@ -78,8 +67,8 @@ function Tracker.on_entity_died(event)
     -- harmless no-op guard in case some other death path (e.g. an
     -- explosion clearing a patch early) ever does route a fire entity
     -- through on_entity_died: without it, a fire "victim" would otherwise
-    -- fall through to the generic death_event/scoring logic below, which
-    -- doesn't make sense for a patch that isn't a combat participant.
+    -- fall through to the generic death_event logic below, which doesn't
+    -- make sense for a patch that isn't a combat participant.
     if entity.type == "fire" then
         return
     end
@@ -96,23 +85,20 @@ function Tracker.on_entity_died(event)
         killer_data = {force = event.force.name}
     end
 
-    local scoreable = is_scoreable_kind(entity.type) and entity.force.name ~= "enemy"
+    local always_record = is_always_recorded_kind(entity.type) and entity.force.name ~= "enemy"
 
     -- Deaths always try to open/extend a combat zone (gated internally on
     -- player proximity), same as before. What's new is that we only bother
     -- writing the death itself to the file if it happened somewhere we
-    -- were already recording, or it's scoreboard-worthy, or the user asked
-    -- for everything via full recording mode. Otherwise this is exactly
-    -- the "entities never near a biter" case the design doc says to skip.
+    -- were already recording, or it's a death worth recording regardless
+    -- of zone, or the user asked for everything via full recording mode.
+    -- Otherwise this is exactly the "entities never near a biter" case the
+    -- design doc says to skip.
     local in_zone = CombatZones.notify_and_check(entity.surface, entity.position)
 
     local kind, size
     if entity.force.name == "enemy" then
         kind, size = record_kill_stat(entity)
-    end
-
-    if scoreable then
-        record_score_event(entity, killer_data)
     end
 
     local cleanup_key_fn = CACHE_CLEANUP_KEY_FN[entity.type]
@@ -138,7 +124,7 @@ function Tracker.on_entity_died(event)
         storage.spawned_by[entity.unit_number] = nil
     end
 
-    if not (in_zone or scoreable or Config.full_recording_mode()) then
+    if not (in_zone or always_record or Config.full_recording_mode()) then
         return
     end
 

@@ -245,7 +245,6 @@ CHECKS = [
     ("mobile_positions recorded", "1-2", present("mobile_positions")),
     ("death_event recorded", "12", present("death_event")),
     ("kill classification covers biter/spitter/worm/spawner", "14", check_kill_classification),
-    ("score_update recorded", "18", present("score_update")),
     ("player_respawn recorded", "18", present("player_respawn")),
     ("damage_event recorded", "12", present("damage_event")),
     ("damage_event includes turret-dealt damage", "12", check_turret_damage),

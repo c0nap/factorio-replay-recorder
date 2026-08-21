@@ -11,7 +11,14 @@ local function ensure_storage()
     -- would otherwise index a nil buffer and error.
     storage.replay_buffer = storage.replay_buffer or {}
     storage.inventory_cache = storage.inventory_cache or {}
-    storage.stats = storage.stats or {deaths = {}, kills = {}}
+    storage.stats = storage.stats or {kills = {}}
+
+    -- score_update (and the running per-force death tally behind it) was
+    -- removed - keeping score isn't this mod's job, death_event's own
+    -- victim.force/killer.force already carry the attribution a
+    -- downstream tool needs. Explicitly cleared here so saves from before
+    -- this change don't keep carrying the stale sub-table around.
+    storage.stats.deaths = nil
 
     -- unit_number -> group's unique_id, kept up to date by
     -- TrackerEvents.on_unit_added_to_group/on_unit_removed_from_group.
