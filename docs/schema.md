@@ -88,3 +88,22 @@ deliberately (position every tick is cheap and needed for combat
 rendering regardless of inventory; inventory only needs to be emitted
 when it actually changes) rather than duplicating position onto every
 item event.
+
+## Design approach: snapshot once, then diff
+
+A chunk's `chunk_snapshot` (tiles + statics + the logistics roster) is
+captured exactly once - the moment that chunk first becomes
+combat-active. Everything else in this schema is either a diff against
+that baseline (`inventory_delta`, `fluid_delta`, `belt_contents`) or a
+discrete event bounded by a lifecycle pair. There is no periodic
+"re-snapshot the tiles/statics" - once captured, a chunk's static data is
+assumed to still hold unless a specific event says otherwise (a
+`damage_event`/`death_event` for a building, or a lifecycle event for a
+dynamic entity like a corpse or ground item).
+
+This means a chunk's original snapshot can go stale in ways nothing
+currently reports: a player mining out a resource patch, felling trees,
+adding/removing landfill, or changing rail track after the snapshot was
+taken isn't reflected anywhere in `replay.json`. Treat a `chunk_snapshot`
+as "what this chunk looked like the moment it entered the replay," not as
+continuously-synced live map state.

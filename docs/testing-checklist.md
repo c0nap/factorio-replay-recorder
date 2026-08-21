@@ -435,14 +435,3 @@ Summarize it with:
 ```
 python3 tools/inspect_logs.py
 ```
-
----
-
-## Not covered by this checklist
-
-This checklist covers everything the 0.1 release tracks. Known gaps
-(landmines, flame damage attribution, capsules, terrain/obstacle
-completeness, electricity, laser turrets, health regeneration, repairs,
-status effects) are tracked as roadmap items in
-[`changelog.md`](../changelog.md) instead of here, so there's one place
-that says what's planned rather than two.
