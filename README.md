@@ -33,7 +33,7 @@ That data is designed to be ingested by standalone desktop visualizers, so you c
 2. Extract it into your Factorio `mods` directory, so you end up with a `mods/replay-recorder_<version>/` folder containing `info.json`.
 3. Enable the mod from Factorio's in-game Mods menu.
 
-Not yet available on the Factorio mod portal - see [`changelog.md`](changelog.md) for the roadmap to 1.0.
+Not yet available on the Factorio mod portal - see [`changelog.md`](docs/changelog.md) for the roadmap to 1.0.
 
 ## Usage
 
@@ -208,7 +208,7 @@ zip and cut a GitHub release.
 
 ## Changelog
 
-See [`changelog.md`](changelog.md) for released changes and the roadmap
+See [`changelog.md`](docs/changelog.md) for released changes and the roadmap
 toward 1.0.
 
 ## License
