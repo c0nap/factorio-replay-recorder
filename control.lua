@@ -56,13 +56,11 @@ script.on_event(defines.events.on_runtime_mod_setting_changed, function(event)
 
     if Config.full_recording_mode() then
         CombatZones.queue_full_recording_backfill()
-    else
-        -- Switching back to cropped mode: zones full recording opened stay
-        -- open forever otherwise, since they were marked permanent instead
-        -- of given a timeout. Give them a normal timeout so they wind down
-        -- like any other zone instead of recording everything forever.
-        CombatZones.expire_permanent_zones()
     end
+    -- Switching back to cropped mode needs no cleanup here: full recording
+    -- mode's chunk activation never adds a storage.active_zones entry in
+    -- the first place (see CombatZones.activate_full_recording_chunk), so
+    -- there's nothing left open to wind down.
 end)
 
 -- Main Loop. Factorio runs at 60 ticks/second.

@@ -14,6 +14,11 @@ local Keys = require("script.keys")
 
 local CombatZones = {}
 
+-- Forward-declared: trigger_combat_at is only ever called from within this
+-- file (notify_and_check below), but is defined further down, after the
+-- chunk-activation helpers it depends on.
+local trigger_combat_at
+
 function CombatZones.init()
     storage.active_zones = storage.active_zones or {}
     storage.known_chunks = storage.known_chunks or {}
@@ -66,7 +71,9 @@ end
 -- Is an actual player (walking, driving, or piloting) within `radius` tiles
 -- of `position`? An unoccupied tank sitting near a nest does not count -
 -- we only care about zones a player is, or very recently was, present for.
-function CombatZones.is_player_nearby(surface, position, radius)
+-- Only used within this file (trigger_combat_at below) - not part of this
+-- module's public interface.
+local function is_player_nearby(surface, position, radius)
     local candidates = surface.find_entities_filtered{
         position = position,
         radius = radius,
@@ -96,7 +103,7 @@ end
 -- (check before, trigger, check after) at every call site.
 function CombatZones.notify_and_check(surface, position)
     local was_active = CombatZones.is_zone_active(surface, position)
-    CombatZones.trigger_combat_at(surface, position)
+    trigger_combat_at(surface, position)
     return was_active or CombatZones.is_zone_active(surface, position)
 end
 
@@ -262,11 +269,13 @@ end
 -- projectile impact). Only actually opens/extends a recording zone if a
 -- player is nearby, unless full recording mode is on, in which case every
 -- chunk is already covered by Tracker.tick()'s whole-surface scan and
--- this is a no-op.
-function CombatZones.trigger_combat_at(surface, position)
+-- this is a no-op. Only used within this file (notify_and_check above,
+-- via the forward declaration at the top) - not part of this module's
+-- public interface.
+function trigger_combat_at(surface, position)
     if Config.full_recording_mode() then return end
 
-    if not CombatZones.is_player_nearby(surface, position, Config.combat_radius()) then
+    if not is_player_nearby(surface, position, Config.combat_radius()) then
         return
     end
 
@@ -342,28 +351,11 @@ function CombatZones.process_backfill_queue()
     end
 end
 
--- Called when full recording mode is switched back off. Full recording
--- activation no longer creates `permanent` active_zones entries at all
--- (see activate_full_recording_chunk), so this is normally a no-op now -
--- it's kept purely as a backward-compat cleanup pass for saves that had
--- full recording mode on under an older version of this mod, where such
--- entries could still exist and would otherwise keep "recording" forever
--- with no expires_at. Give any that turn up a normal timeout instead so
--- they wind down like any other zone.
-function CombatZones.expire_permanent_zones()
-    for _, zone in pairs(storage.active_zones) do
-        if zone.permanent then
-            zone.permanent = nil
-            zone.expires_at = game.tick + Config.zone_timeout_ticks()
-        end
-    end
-end
-
 function CombatZones.tick()
     if Config.full_recording_mode() then return end
 
     for id, zone in pairs(storage.active_zones) do
-        if not zone.permanent and zone.expires_at and game.tick >= zone.expires_at then
+        if zone.expires_at and game.tick >= zone.expires_at then
             storage.active_zones[id] = nil
             Exporter.log_event(game.tick, "zone_expired", {chunk_id = id})
         end

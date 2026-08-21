@@ -108,8 +108,22 @@ open by default here since it isn't done yet.
   a multi-fluidbox entity's independent sides (e.g. a pump's two ends)
   no longer get merged into one reported segment the way the previous
   guess-every-index version could.
+- `combat_zones.lua`'s `is_player_nearby`/`trigger_combat_at` are local
+  functions now instead of public `CombatZones.*` members - neither was
+  ever called from outside this file.
+- Added locale text for the 10 mod settings that had none (they were
+  showing up as raw internal names like `rrec-chain-near-hops` in
+  Factorio's settings menu instead of a readable name/description).
+- Removed a stale "goal reset" comment left over from the removed
+  scoring framing.
 
 **Removed**
+- Dead "permanent zone" cleanup code (`CombatZones.expire_permanent_zones`
+  and its `zone.permanent` checks): no released version of this mod has
+  ever set that flag - full recording mode's chunk activation was
+  already changed, before 0.1.0 shipped, to never add a
+  `storage.active_zones` entry at all, so the flag it existed to migrate
+  away from was already unreachable in the first public release.
 - `score_update` - keeping a running per-force death tally isn't this
   recorder's job. `death_event` already names the victim's force and,
   when known, the killer's, which is the attribution a downstream tool

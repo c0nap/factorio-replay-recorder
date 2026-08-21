@@ -230,11 +230,11 @@ function Tracker.on_player_respawned(event)
     local player = game.players[event.player_index]
     if not player then return end
 
-    -- The "goal reset": mark the point a player re-enters play after dying
-    -- so a viewer can jump straight from the death to the respawn instead
-    -- of sitting through empty downtime. The combat zone itself doesn't
-    -- follow the player to their spawn point - it naturally stops
-    -- recording that area once no player is near it, per is_player_nearby.
+    -- Marks the point a player re-enters play after dying, so a viewer can
+    -- jump straight from the death to the respawn instead of sitting
+    -- through empty downtime. The combat zone itself doesn't follow the
+    -- player to their spawn point - it naturally stops recording that
+    -- area once no player is near it, per is_player_nearby.
     Exporter.log_event(game.tick, "player_respawn", {
         player_index = event.player_index,
         force = player.force.name,
