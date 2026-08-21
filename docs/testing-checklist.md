@@ -42,7 +42,7 @@ just enemies.
 Type this command twice - Factorio has a misfire guard for the first console
 command of a session.
 ```
-/c game.player.force.research_all_technologies(); game.speed=3; settings.global["rrec-combat-radius"] = {value = 100}; settings.global["rrec-distant-sample-interval-seconds"] = {value = 1}; settings.global["rrec-chain-near-hops"] = {value = 1}; settings.global["rrec-chain-max-hops"] = {value = 50}; settings.global["rrec-chunk-backfill-per-tick"] = {value = 2}; settings.global["rrec-max-buffered-events"] = {value = 2}; settings.global["rrec-diagnostics-enabled"] = {value = true}; settings.global["rrec-battlefield-marker-enabled"] = {value = true}
+/c game.player.force.research_all_technologies(); settings.global["rrec-combat-radius"] = {value = 100}; settings.global["rrec-distant-sample-interval-seconds"] = {value = 1}; settings.global["rrec-chain-near-hops"] = {value = 1}; settings.global["rrec-chain-max-hops"] = {value = 50}; settings.global["rrec-chunk-backfill-per-tick"] = {value = 2}; settings.global["rrec-max-buffered-events"] = {value = 2}; settings.global["rrec-diagnostics-enabled"] = {value = true}; settings.global["rrec-battlefield-marker-enabled"] = {value = true}
 ```
 Turns on diagnostics and the battlefield marker (cyan outline around
 active zones). Also widens the combat radius to 100 tiles - steps 4-7
