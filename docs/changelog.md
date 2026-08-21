@@ -102,6 +102,12 @@ open by default here since it isn't done yet.
   confirmed length operator) instead, so the mismatch can't occur in the
   first place. The entity-name-based mute/suppress logic this used to
   need is gone.
+- `fluid_chains.lua` now walks the exact pipe network instead of guessing:
+  `LuaFluidBox::get_pipe_connections` (confirmed) returns each
+  connection's target box *and* its exact index within its own owner, so
+  a multi-fluidbox entity's independent sides (e.g. a pump's two ends)
+  no longer get merged into one reported segment the way the previous
+  guess-every-index version could.
 
 **Removed**
 - `score_update` - keeping a running per-force death tally isn't this
@@ -111,14 +117,6 @@ open by default here since it isn't done yet.
   computed straight from `death_event` instead of a dedicated event.
 
 **Planned (not yet implemented)**
-- `fluid_chains.lua` still can't recover which exact fluidbox index a
-  connection belongs to, so a discovered neighbor has its *entire*
-  (now correctly bounded) index range enqueued rather than just the one
-  actually connected - a real precision loss for any entity with
-  independent multi-fluidbox sides (e.g. a pump). `PipeConnection`'s
-  `target_fluidbox_index` field looks like the right tool for this, but
-  which `LuaFluidBox` method actually returns `PipeConnection` hasn't
-  been confirmed against real doc text yet - blocked on that one lookup.
 - `inspect_replay.py`'s battlefield-cluster lookup keys on chunk
   coordinates alone, dropping the surface - activity on two surfaces
   that happen to share chunk coordinates can be misattributed to the
