@@ -94,6 +94,14 @@ open by default here since it isn't done yet.
   `force`, `damage_event`'s `target_type`/`position`) and names the
   literal JSON keys for its list-shaped fields instead of describing them
   in prose.
+- Root-caused (not just muted) the `fluid_chains.lua` "index out of
+  range" mismatch: `LuaEntity::fluids_count`'s own docs confirm it also
+  counts non-fluidbox storages (a fluid turret's internal ammo buffer,
+  a fluid wagon's contents) that `entity.fluidbox` has no slot for -
+  every fluidbox-bounded loop now uses `#entity.fluidbox` (its own
+  confirmed length operator) instead, so the mismatch can't occur in the
+  first place. The entity-name-based mute/suppress logic this used to
+  need is gone.
 
 **Removed**
 - `score_update` - keeping a running per-force death tally isn't this
@@ -103,15 +111,14 @@ open by default here since it isn't done yet.
   computed straight from `death_event` instead of a dedicated event.
 
 **Planned (not yet implemented)**
-- `fluid_chains.lua` can't recover which exact fluidbox index a
-  connection belongs to, so a discovered neighbor has its *entire* index
-  range enqueued rather than just the connected one - a real precision
-  loss for any entity with independent multi-fluidbox sides (e.g. a
-  pump), pending a confirmed reverse-index lookup.
-- `fluid_chains.lua` also mutes (rather than resolves) a real engine
-  inconsistency where `entity.fluids_count` over-reports valid indices
-  for some entity types - logged once per entity name, then silently
-  skipped from there on.
+- `fluid_chains.lua` still can't recover which exact fluidbox index a
+  connection belongs to, so a discovered neighbor has its *entire*
+  (now correctly bounded) index range enqueued rather than just the one
+  actually connected - a real precision loss for any entity with
+  independent multi-fluidbox sides (e.g. a pump). `PipeConnection`'s
+  `target_fluidbox_index` field looks like the right tool for this, but
+  which `LuaFluidBox` method actually returns `PipeConnection` hasn't
+  been confirmed against real doc text yet - blocked on that one lookup.
 - `inspect_replay.py`'s battlefield-cluster lookup keys on chunk
   coordinates alone, dropping the surface - activity on two surfaces
   that happen to share chunk coordinates can be misattributed to the
@@ -173,6 +180,25 @@ Flagged for discussion, not decided:
   fluids, which share their levels proportionally across a segment
   rather than moving in discrete units. Worth reconsidering alongside
   the chain-walk approach, not a replacement for it yet.
+- **Discovering which inserters service a distant chest.** Chests have
+  no "what's connected to me" query, so `servicing_inserters` searches a
+  configurable tile radius around a chest and filters candidates by
+  their exact (confirmed) `pickup_target`/`drop_target`. That radius is
+  the only heuristic part - and it's a harder tradeoff than it looks:
+  a persistent reverse index built as inserters are discovered elsewhere
+  (chunk snapshots, physical zone scans, chain walks) sounds like the
+  "real" fix, but a chest reached via distant chain-walking is
+  specifically one nothing else has touched yet, so its servicing
+  inserter would often be missing from that index too - a live spatial
+  query at the moment of need may genuinely be the right tool here. A
+  full, unbounded per-lookup search isn't free either given how much
+  effort already went into keeping full-recording-mode scans bounded
+  elsewhere in this mod. One option that doesn't need new information:
+  bound the search by the chest's containing chunk (already a meaningful
+  unit everywhere else in this mod) instead of an arbitrary tile count -
+  larger and more consistent than the current radius, but still a bound,
+  not a real fix. Not implemented pending a decision on which tradeoff
+  to take.
 
 ## v0.3 — Full Vanilla Coverage
 
