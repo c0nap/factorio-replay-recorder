@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Summarizes a Factorio Replay Recorder output file (replay.json) so you
+"""Summarizes a Replay Recorder output file (replay.json) so you
 don't have to read raw JSONL by hand to tell what a session recorded.
 
 Usage:
@@ -276,7 +276,7 @@ def summarize(events, malformed, sample_limit, only_type):
     counts = collections.Counter(e.get("type", "<missing type>") for e in events)
 
     print("=" * 70)
-    print("Factorio Replay Recorder - replay.json summary")
+    print("Replay Recorder - replay.json summary")
     print("=" * 70)
 
     if not events:

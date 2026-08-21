@@ -1,13 +1,13 @@
 <div align=center>
-  <h1>Factorio Replay Recorder</h1>
+  <h1>Replay Recorder</h1>
   <h4>A standalone telemetry exporter for visualizing combat and gameplay mechanics</h4>
 </div>
 
 <hr>
 
-Factorio Replay Recorder extracts highly detailed, event-driven game state data (tiles, entities, projectiles, and AI behavior) and exports it into an independent JSON replay format.
+Replay Recorder extracts detailed, event-driven game state (tiles, entities, projectiles, and AI behavior) and exports it into an independent JSON replay format.
 
-This data is designed to be ingested by standalone desktop visualizers, allowing you to replay, analyze, and map out combat encounters without running the Factorio engine.
+That data is designed to be ingested by standalone desktop visualizers, so you can replay, analyze, and map out combat encounters without running the Factorio engine itself.
 
 *Inspired heavily by the incredible [Statorio](https://mods.factorio.com/mod/statorio) by chksm.*
 
@@ -19,13 +19,34 @@ This data is designed to be ingested by standalone desktop visualizers, allowing
 * **Event-Driven Tracking:** Projectile/stream impacts, fire and acid patches appearing and expiring, inventory changes, and belt contents are all recorded as diffs or one-shot events rather than by polling everything every tick.
 * **AI Grouping:** Nests captured in a snapshot are clustered into rough "bases" by proximity; biters/spitters report the `unit_group` they belong to and, individually, the specific spawner they hatched from, so a viewer can render an attack/expansion party or a nest's offspring as one object.
 * **Mod-Agnostic:** Nothing is matched by hardcoded entity name. Combat detection is wired up for every projectile/stream prototype in the data stage, and building capture works by *excluding* known mobile/decorative entity types rather than matching an allow-list - a mod's new biter, turret, or building shows up automatically.
-* **Logistic Reach:** A chunk snapshot captures the roster of every storage/provider/requester container reachable by a logistics network that touches it - not just the chests physically standing in that chunk. Their contents are then sampled on a slow, configurable interval (not every tick - a shared network can span an entire base) for as long as the network keeps showing robot activity, so supply lines feeding the battlefield stay visible even when the depot itself is elsewhere.
-* **Physical Item Tracking:** Containers, corpses, and inserter hands physically inside a zone are diffed every tick, the same way belts already were - chests, what's mid-transfer, and what a fallen player dropped are all part of "immediately here on the battlefield." A player's corpse also gets a one-time `corpse_created` record (who died, when, and to what) and a `corpse_expired` record once it's gone, so a viewer can show "this is Alice's corpse from tick 41200" rather than just an anonymous chest-like object.
-* **Long-Distance Supply Chains:** Belts and inserters are followed outward from a zone - well past its chunk boundary - via belt-to-belt connections and inserter pickup/drop targets. Close hops get tracked precisely; distant hops are rolled up into a compact "roughly this many of this item, this direction from the fight" summary instead of one event per far-off entity, so a huge buffer chest 40 belts away shows up as one line, not forty.
-* **Fluid Chains:** Pipes, storage tanks, pumps, and flamethrower turret fuel are tracked the same way, following the pipe network's own internal "fluid segments" - each connected run of pipe is read and reported once, however long it is, not once per pipe.
-* **Ground Items:** Loose item stacks lying on the ground (`item-entity`) inside an active zone are diffed every tick just like a chest, via the `.stack` property `ItemEntity` types expose. A player manually dropping one also gets a one-time `ground_item_created` provenance record (who dropped it, when, where), and a `ground_item_removed` record once it's gone - picked up, mined, or destroyed, tracked via `register_on_object_destroyed` regardless of which.
-* **Item Motion Is Implicit:** There's no separate "item moved" event - an item owned by a player, vehicle, or robot is tracked under that owner's `inventory_delta`, and that owner's position is tracked every tick via `mobile_positions`. Cross-referencing the two (by `owner`/`id`) tells a viewer where those items physically are at any moment, including while their owner is moving.
+* **Logistic Reach:** A chunk snapshot captures the roster of every storage/provider/requester container reachable by a logistics network that touches it - not just the chests physically standing in that chunk. Their contents are then sampled on a slow, configurable interval for as long as the network keeps showing robot activity, so supply lines feeding the battlefield stay visible even when the depot itself is elsewhere.
+* **Physical Item Tracking:** Containers, corpses, and inserter hands physically inside a zone are diffed every tick, the same way belts already were - chests, what's mid-transfer, and what a fallen player dropped are all part of "immediately here on the battlefield." A player's corpse also gets a one-time `corpse_created` record and a `corpse_expired` record once it's gone.
+* **Long-Distance Supply Chains:** Belts and inserters are followed outward from a zone - well past its chunk boundary - via belt-to-belt connections and inserter pickup/drop targets. Close hops get tracked precisely; distant hops are rolled up into a compact "roughly this many of this item, this direction from the fight" summary instead of one event per far-off entity.
+* **Fluid Chains:** Pipes, storage tanks, pumps, and flamethrower turret fuel are tracked the same way, following the pipe network's own internal "fluid segments" - each connected run of pipe is read and reported once, however long it is.
+* **Ground Items:** Loose item stacks lying on the ground inside an active zone are diffed every tick just like a chest. A player manually dropping one gets a one-time `ground_item_created` provenance record, and a `ground_item_removed` record once it's gone.
+* **Item Motion Is Implicit:** There's no separate "item moved" event - an item's owner is tracked under that owner's `inventory_delta`, and that owner's position is tracked every tick via `mobile_positions`. Cross-referencing the two tells a viewer where those items physically are at any moment, including while their owner is moving.
 * **Full Recording Mode:** A settings toggle to disable cropping entirely and record every chunk, every tick, for when you need everything and not just combat. It produces very large files - see [Settings](#settings) below.
+
+## Installation
+
+1. Download a release zip from the [Releases](../../releases) page (or build one yourself - see [`docs/packaging.md`](docs/packaging.md)).
+2. Extract it into your Factorio `mods` directory, so you end up with a `mods/replay-recorder_<version>/` folder containing `info.json`.
+3. Enable the mod from Factorio's in-game Mods menu.
+
+Not yet available on the Factorio mod portal - see [`changelog.md`](docs/changelog.md) for the roadmap to 1.0.
+
+## Usage
+
+There are three ways to produce a `replay.json` with this mod, ranging
+from "just play the game" to a not-yet-confirmed headless workflow meant
+for automated testing. See [`docs/usage.md`](docs/usage.md) for the full
+breakdown of each and when to use it:
+
+1. Recording live during normal gameplay (not recommended).
+2. Playing back a Factorio-recorded replay via the in-game **Play**
+   button (recommended for most users).
+3. Playing back a replay via the headless Factorio client (most
+   efficient for testing and development - not yet confirmed to work).
 
 ## Settings
 
@@ -39,10 +60,10 @@ All settings live under *Settings > Mod Settings > Map* and can be changed witho
 | Network activity window | 30 seconds | How long a logistics network keeps counting as reachable after it was last seen with any robots, so a network doesn't flicker in and out just because its robots are all briefly mid-delivery. |
 | Chain near hops | 5 | Belt/inserter chain hops within this distance of a zone get exact per-entity tracking; beyond it, they're rolled up into a compact summary instead. |
 | Chain max hops | 30 | Absolute limit on how far a belt/inserter chain walk follows outward from a zone, near or far. |
-| Inserter search radius | 3 tiles | How far to search around a chest for inserters that service it (chests have no "what's connected to me" query of their own). The radius only narrows the search - matches are confirmed via each candidate's exact `pickup_target`/`drop_target`, so a too-large radius costs a little performance, not correctness. |
-| Chunk backfill per tick | 2 chunks | When full recording mode turns on with already-generated chunks in the save, how many of them get scanned and captured per tick while catching up. Lower spreads the catch-up out over more ticks (smoother, slower to finish); higher finishes faster at the cost of more work per tick. See [Full Recording Mode](#full-recording-mode-performance) below. |
-| Flush interval | 1 second | How often the buffered event queue gets serialized and written to `replay.json`, at most - see "Max buffered events" below for the other trigger. Larger values batch more events into fewer, bigger writes; smaller values write more often in smaller chunks. |
-| Max buffered events | 2 events | Caps how many buffered events a single flush serializes+writes, and triggers an early flush - before the flush interval above is even up - once the buffer grows past this size. See [Full Recording Mode](#full-recording-mode-performance) below. |
+| Inserter search radius | 3 tiles | How far to search around a chest for inserters that service it. The radius only narrows the search - matches are confirmed via each candidate's exact `pickup_target`/`drop_target`, so a too-large radius costs a little performance, not correctness. |
+| Chunk backfill per tick | 2 chunks | When full recording mode turns on with already-generated chunks in the save, how many of them get scanned and captured per tick while catching up. See [Full recording mode performance](#full-recording-mode-performance) below. |
+| Flush interval | 1 second | How often the buffered event queue gets serialized and written to `replay.json`, at most - see "Max buffered events" below for the other trigger. |
+| Max buffered events | 2 events | Caps how many buffered events a single flush serializes+writes, and triggers an early flush once the buffer grows past this size. See [Full recording mode performance](#full-recording-mode-performance) below. |
 | Full recording mode | Off | Disables cropping and records every generated chunk continuously. **Produces enormous files** (potentially gigabytes per hour) - meant for short recordings or debugging, not routine play. |
 | Diagnostics enabled | Off | Writes per-tick timing to Factorio's own log file, not `replay.json` (see [Performance diagnostics](#performance-diagnostics) below). |
 | Battlefield marker enabled | Off | Draws a cyan line around the exterior perimeter of whatever chunks are currently recording (see [Battlefield marker](#battlefield-marker) below). A no-op under full recording mode. |
@@ -52,147 +73,83 @@ If you don't write Lua and just want to tune how aggressively replays are croppe
 ### Full recording mode performance
 
 Turning full recording mode on mid-save backfills every already-generated
-chunk, not just new ones - captured gradually via the "chunk backfill per
-tick" setting above rather than all at once, so the scanning itself
-(tiles/statics/logistics per chunk) doesn't freeze the game the way it
-originally did.
+chunk, throttled by "Chunk backfill per tick" so the scan itself doesn't
+freeze the game. That scan still queues a full `chunk_snapshot` event per
+chunk, so "Max buffered events" caps how many entries `Exporter.flush()`
+writes per call and triggers an early flush the moment the buffer crosses
+that size - a large backlog drains as several small, bounded writes
+instead of one write that can stall for multiple seconds.
 
-That fixed the scan side, but a real diagnostics run (see [Performance
-diagnostics](#performance-diagnostics)) showed a second, separate freeze
-downstream of it: every scanned chunk queues a full `chunk_snapshot`
-event, and `Exporter.flush()` used to write the *entire* buffered queue in
-one call regardless of size - one single flush call took **8.3 seconds**
-on an early run, dwarfing the scan cost. "Max buffered events" fixes this
-directly: `Exporter.flush()` writes at most that many entries per call
-(oldest first), and `control.lua` flushes early - not just on the fixed
-interval - the moment the buffer crosses that same size, so a large
-backlog drains as several small, bounded writes instead of one massive
-one. New chunks generated after the initial backfill (walking into
-unexplored territory) are still captured immediately, one at a time, as
-they generate.
+While backfill is active, `control.lua`'s `on_tick` alternates: even
+ticks drain the backfill queue, odd ticks check for a flush - so the two
+heaviest operations never land in the same game tick (which runs as one
+atomic, uninterruptible unit of work regardless of internal ordering).
+New chunks generated after the initial backfill are still captured
+immediately as they generate.
 
-Even with that in place, a later diagnostics run still showed single
-ticks over 450ms during the backfill window - an attempted fix that just
-reordered the flush check to run *before* that tick's own backfill scan
-turned out not to help at all, and a run afterward confirmed it: the
-worst ticks still showed a large scan time AND a large write time
-together, not one or the other. The reasoning behind that fix was wrong -
-Factorio runs `on_tick` as one atomic, uninterruptible unit of work per
-game tick, so anything that happens inside it lands in the same single
-stutter regardless of what order it runs in.
-
-The actual fix is to never let a backfill scan and a flush share a tick
-at all. While the backfill queue has anything left in it, `control.lua`'s
-`on_tick` now alternates: even ticks drain the backfill queue and skip
-the size-triggered flush check; odd ticks skip the backfill queue and run
-the flush check instead. This halves the backfill's drain rate while it's
-actively running, in exchange for genuinely isolating the two heaviest
-operations onto separate frames. Combined with lowering both settings
-above again, individual full-recording ticks should no longer stand out
-the way a single 450ms+ tick did before - though because a save can keep
-an OLDER stored setting value even after a mod update changes the
-default, see [Performance diagnostics](#performance-diagnostics) below
-for how to confirm what's actually in effect for a given save rather than
-assuming the new defaults took hold.
+A save can keep an older stored setting value even after a mod update
+changes the default - see [Performance diagnostics](#performance-diagnostics)
+below to confirm what's actually in effect for a given save rather than
+assuming the current defaults took hold.
 
 The fixed-interval flush is also staggered half a period away from the
-distant-sample interval now: both commonly run on the same cadence (the
-testing checklist sets both to 1 second), so without the offset they'd
-land on the same tick every time, compounding two separate periodic
-costs instead of spreading them out - visible in real data as repeated
-~15-30ms streaks outside the backfill burst itself.
+distant-sample interval, since both commonly run on the same cadence and
+would otherwise land on the same tick every time, compounding two
+separate periodic costs instead of spreading them out.
 
 ### Performance diagnostics
 
 Turning on "Diagnostics enabled" measures three timings every tick via
 `game.create_profiler()`: `tick_time` (the whole `on_tick` handler),
-`scan_time` (everything except the JSON write -
-`CombatZones`/`Tracker`/`Logistics`/`ItemChains`/`FluidChains`), and
-`write_time` (`Exporter.flush()` alone, present only on ticks where a
-flush actually happened) - answering "is a stall scan-bound or IO-bound"
-with real numbers instead of a guess. Each line also carries `buffer_size`
-(how many events are currently queued) and `backfill_remaining` (how many
-chunks are left in the full-recording backfill queue), added specifically
-so a real run can confirm whether "Chunk backfill per tick"/"Max buffered
-events" are actually the values in effect for that save - not just what
-this mod's settings.lua defaults to, which an existing save can silently
-override with an older stored value.
+`scan_time` (everything except the JSON write), and `write_time`
+(`Exporter.flush()` alone, present only on ticks where a flush actually
+happened) - answering "is a stall scan-bound or IO-bound" with real
+numbers. Each line also carries `buffer_size` (events currently queued)
+and `backfill_remaining` (chunks left in the full-recording backfill
+queue), so a real run can confirm the settings above are actually in
+effect for that save.
 
-These do **not** go into `replay.json`. `LuaProfiler` doesn't expose raw
-time values to Lua at all - confirmed in the real API docs, not a bug on
-either end - it's only usable anywhere a `LocalisedString` is accepted
-(`game.print()`, `log()`, GUI text), which does not include this mod's
-own JSON event log. So `script/diagnostics.lua` writes a marked line
-straight to Factorio's own log file via `log()` instead - the profiler
-objects go in as `LocalisedString` elements, the same way they'd be
-passed to `game.print()`, and Factorio resolves them into formatted
-duration text on the way into the log. Run
-[`tools/inspect_logs.py`](tools/inspect_logs.py) to break that log data
-down:
+These never go into `replay.json` - `LuaProfiler` values are only usable
+as `LocalisedString` elements (`game.print()`, `log()`, GUI text), so
+`script/diagnostics.lua` writes a marked line to Factorio's own log file
+instead. Run [`tools/inspect_logs.py`](tools/inspect_logs.py) to
+summarize it:
 ```
 python3 tools/inspect_logs.py
 ```
-Beyond the min/p50/mean/p95/max summary per field, it also reports:
-a dedicated backfill-queue summary (how long it took to drain, its peak
-depth, and the peak buffer size seen - the numbers to check first if a
-fix "doesn't seem to be doing anything"); the slowest N individual ticks
-per field (`--top-n`, default 10), each annotated with that tick's
-`buffer_size`/`backfill_remaining` for context; and any "slow streaks" -
-runs of consecutive ticks that were each at or above a threshold (their
-field's own p95 by default, or `--slow-threshold-ms` to set one
-explicitly). A summary stat alone can't tell a single freak spike apart
-from many ticks in a row each being a little slow - which is what
-actually reads as a stutter to a player - so the streak report exists
-specifically to identify *that* pattern instead of just describing the
-distribution.
+Beyond a min/p50/mean/p95/max summary per field, it reports a dedicated
+backfill-queue summary (drain time, peak depth, peak buffer size), the
+slowest N individual ticks per field (`--top-n`, default 10), and any
+"slow streaks" - runs of consecutive ticks each at or above a threshold
+(each field's own p95 by default, or `--slow-threshold-ms` to set one
+explicitly).
 
 It defaults to the standard per-OS `factorio-current.log` location (see
-`docs/testing-checklist.md`'s setup step for the exact paths); pass
-`--path` if that's wrong for your setup, e.g. to point at
-`factorio-previous.log` for the session before the current one.
+[`docs/testing-checklist.md`](docs/testing-checklist.md)'s setup step for
+the exact paths); pass `--path` if that's wrong for your setup, e.g. to
+point at `factorio-previous.log` for the session before the current one.
 
 ### Battlefield marker
 
 Turning on "Battlefield marker enabled" draws a cyan line around the
-exterior perimeter of whatever chunks are currently active
-(`storage.active_zones`) - recomputed every second via `rendering.draw_line`,
-non-destructively (it never touches real map tiles). A no-op under full
-recording mode, since every chunk is "the zone" then and a border around
-everything would be meaningless. Purely a visual aid for manual testing -
-it has no effect on what gets recorded.
+exterior perimeter of whatever chunks are currently active, recomputed
+every second via `rendering.draw_line`, non-destructively (it never
+touches real map tiles). A no-op under full recording mode, since every
+chunk is "the zone" then and a border around everything would be
+meaningless. Purely a visual aid for manual testing - it has no effect on
+what gets recorded.
 
 ## Output Format
 
-Data is exported to Factorio's `script-output/replay.json` as newline-delimited JSON (JSONL) - one `{"tick": ..., "type": ..., "data": ...}` object per line, appended roughly once a second. Reading it as a stream (rather than one giant JSON document) is what lets a visualizer start rendering before a long recording has finished.
+Data is exported to Factorio's `script-output/replay.json` as
+newline-delimited JSON (JSONL) - one `{"tick": ..., "type": ..., "data":
+...}` object per line, appended roughly once a second. Reading it as a
+stream (rather than one giant JSON document) is what lets a visualizer
+start rendering before a long recording has finished.
 
-| `type` | Fired when | `data` contains |
-|---|---|---|
-| `chunk_snapshot` | A chunk records for the first time | `tiles`, `statics` (every building/turret/wall/nest, tagged `is_defense` for turrets/walls/gates and grouped into nest `cluster`s), and `logistics` - a one-time *roster* (no contents, not capped) of every storage/provider/requester container reachable by a logistics network touching this chunk, plus that network's robot counts *at capture time* (`robots_at_capture`). Contents aren't here - they arrive later via ongoing `inventory_delta` events (see below), since a roster is a structural fact but contents go stale. |
-| `mobile_positions` | Every tick a zone is active | Position/orientation of every unit, character, vehicle, wagon, and bot in the zone, tagged with `group_id` if part of a unit group and `spawner_id` for a biter/spitter's originating nest |
-| `death_event` | Any tracked entity dies | Victim (with `hostile_kind`/`hostile_size` for biters/spitters/worms/spawners), killer if any, and `loot` (items dropped) when non-empty |
-| `score_update` | A player or a manned/piloted vehicle dies | Force, killer, and that force's running death count |
-| `player_respawn` | A player respawns after dying | Player index and new position - the "goal reset" marker |
-| `damage_event` | A turret, wall, gate, character, vehicle, locomotive, or artillery wagon takes damage | Target, damage amount, `dealer` (who's responsible) and `dealt_by` (the specific projectile/flame/beam that hit) |
-| `projectile_impact` | A tracked projectile/stream hits something | Weapon name, source, target position/entity |
-| `effect_created` | A fire/acid patch is created (a spitter's acid, a flamethrower, ...) | Name, position, source entity if known |
-| `effect_expired` | A fire/acid patch fades out on its own | Name, position |
-| `inventory_delta` | Any tracked owner's item contents change | `owner` (a stable key, e.g. `player_3`, `vehicle_118`, `container_204`), `owner_kind` (`player`/`vehicle`/`container`/`corpse`/`robot`/`inserter_hand`/`ground_item`), a list of `{item, delta}` changes, and `position` for owners (like corpses and ground items) that aren't otherwise position-tracked elsewhere |
-| `fluid_delta` | A tracked fluid segment's contents change | `owner` (`fluid_<entity>_<fluidname>`), a list of `{fluid, delta}` changes, and the representative entity's `position` |
-| `belt_contents` | A belt's contents change while in an active zone or reached by a chain walk | Per-line item counts, only for lines that changed |
-| `item_distribution` | The far end of a belt/inserter chain has any tracked contents | Per (item, rough direction from the zone) entries: `approx_count`, a `centroid` position, and how many entities that estimate is built from |
-| `unit_group_created` | A biter/spitter group forms up | Group id, force, position, human-readable state (`gathering`, `attacking_target`, ...) |
-| `corpse_created` | A player character dies and their corpse appears | `owner` (`corpse_<id>`, the same key its `inventory_delta`/`corpse_expired` events use), position, `death_tick`, `player_index`/`player_name`, and `killer` if the death had one |
-| `corpse_expired` | A player corpse times out or is fully looted | `owner` (`corpse_<id>`) |
-| `ground_item_created` | A player manually drops an item on the ground | `owner` (`ground_item_<id>`, the same key its `inventory_delta` uses), position, `player_index` |
-| `ground_item_removed` | A tracked ground item is picked up, mined, or destroyed | `owner` (`ground_item_<id>`) |
-| `zone_created` | A chunk starts recording for the first time (not re-logged on every later hit that just extends its timeout) | Chunk id |
-| `zone_expired` | A chunk stops recording after its timeout | Chunk id |
-
-Per-tick performance timings are *not* in this table - they never go into
-`replay.json` at all, see [Performance diagnostics](#performance-diagnostics)
-above for where they actually end up and why.
-
-**Cross-referencing item location and motion:** there's no dedicated "item moved" event. An item owned by a player, vehicle, or robot shows up under that owner's `inventory_delta` (`owner_kind` = `player`/`vehicle`/`robot`), and that same owner's position is in every `mobile_positions` update (matched by `id`/`owner`). To know where a player's ammo physically is at tick T, look up their position in `mobile_positions` at T - the two streams are deliberately kept separate (position every tick is cheap and needed for combat rendering regardless of inventory; inventory only needs to be emitted when it actually changes) rather than duplicating position onto every item event.
+See [`docs/schema.md`](docs/schema.md) for the full event-type
+reference - the contract this mod's output follows, and the thing to
+build a downstream consumer against.
 
 ## For Modders
 
@@ -231,19 +188,28 @@ isn't something a headless CI job can easily stand in for. Instead:
 * [`tools/inspect_replay.py`](tools/inspect_replay.py) is a general-purpose
   summary for anything not tied to the checklist - event counts, tick
   range, battlefield count/duration/bounding box, scoreboard, kills by
-  kind/size, and a sample payload per event type. No dependencies beyond
-  Python's standard library for either script:
+  kind/size, and a sample payload per event type:
   ```
   python3 tools/inspect_replay.py
   ```
 * [`tools/inspect_logs.py`](tools/inspect_logs.py) summarizes per-tick
-  performance timings (only present when "Diagnostics enabled" was on)
-  from Factorio's own log file - see
-  [Performance diagnostics](#performance-diagnostics) for why those don't
-  live in `replay.json`:
+  performance timings (only present when "Diagnostics enabled" was on) -
+  see [Performance diagnostics](#performance-diagnostics) above:
   ```
   python3 tools/inspect_logs.py
   ```
+
+None of these need dependencies beyond Python's standard library.
+
+## Releasing
+
+See [`docs/packaging.md`](docs/packaging.md) for how to build a release
+zip and cut a GitHub release.
+
+## Changelog
+
+See [`changelog.md`](docs/changelog.md) for released changes and the roadmap
+toward 1.0.
 
 ## License
 
@@ -301,4 +267,3 @@ real log/probe output someone actually observed - never by "it's confirmed
 for case A, so it probably also holds for case B". If you
 aren't sure whether something is confirmed or assumed, say assumed.
 -->
-

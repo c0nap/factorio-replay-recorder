@@ -1,0 +1,65 @@
+======================================================================
+Replay Recorder - checklist verification
+======================================================================
+[PASS] chunk_snapshot recorded
+       539 event(s)
+[PASS] chunk_snapshot has non-empty statics
+       e.g. 7 statics in one snapshot
+[PASS] chunk_snapshot has non-empty tiles
+       e.g. 1024 tiles in one snapshot
+[PASS] chunk_snapshot has a non-empty logistics roster
+       e.g. 1 network(s) in one snapshot
+[PASS] inserter-to-chest servicing disambiguates a nearby pair
+       iron-plate -> container_10, container_11, container_12, container_78, container_81, container_82, container_86, container_9, copper-plate -> container_75, container_80
+[PASS] zone_created recorded
+       6 event(s)
+[PASS] zone_expired recorded
+       6 event(s)
+[PASS] mobile_positions recorded
+       14157 event(s)
+[PASS] death_event recorded
+       26 event(s)
+[PASS] kill classification covers biter/spitter/worm/spawner
+       saw biter, spawner, spitter, worm
+[PASS] score_update recorded
+       3 event(s)
+[PASS] player_respawn recorded
+       1 event(s)
+[PASS] damage_event recorded
+       1253 event(s)
+[PASS] damage_event includes turret-dealt damage
+       saw flamethrower-turret, gun-turret
+[PASS] death_event includes a turret being destroyed
+       saw flamethrower-turret, gun-turret
+[PASS] projectile_impact recorded
+       219 event(s)
+[PASS] effect_created recorded (fire/acid)
+       5 event(s)
+[PASS] effect_expired recorded (fire/acid fading)
+       5 event(s)
+[PASS] acid effect diversity (worm + spitter sources)
+       saw sources: flamethrower-turret, medium-worm-turret, small-spitter
+[PASS] vehicle diversity (car + spidertron seen)
+       saw car, character, logistic-robot, spider-vehicle, unit
+[PASS] vehicle combat damage/kill credit diversity (shot vs. run over)
+       saw both a projectile-dealt hit and a bare collision credited to the tank
+[PASS] belt_contents recorded
+       1 event(s)
+[PASS] item_distribution recorded (long-chain rollup)
+       20 event(s)
+[PASS] fluid_delta recorded
+       5 event(s)
+[PASS] inventory_delta owner_kind coverage
+       saw container, corpse, ground_item, inserter_hand, player, robot, vehicle
+[PASS] corpse_created recorded
+       1 event(s)
+[PASS] corpse_expired recorded
+       1 event(s)
+[PASS] ground_item_created recorded
+       10 event(s)
+[PASS] ground_item_removed recorded
+       10 event(s)
+[PASS] unit_group_created recorded
+       1 event(s)
+
+30/30 checks passed

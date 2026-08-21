@@ -92,7 +92,7 @@ end
 -- settles that question instead of guessing at it again.
 local function log_environment()
     local base_version = script.active_mods and script.active_mods["base"]
-    local mod_version = script.active_mods and script.active_mods["factorio-replay-recorder"]
+    local mod_version = script.active_mods and script.active_mods["replay-recorder"]
     log("[replay-recorder] environment: base=" .. tostring(base_version) .. " mod=" .. tostring(mod_version))
 end
 
