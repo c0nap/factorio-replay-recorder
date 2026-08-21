@@ -43,6 +43,8 @@ cp -r control.lua data.lua data-updates.lua settings.lua info.json LICENSE local
 (cd /tmp && zip -r "${STAGE}.zip" "${STAGE}")
 ```
 
+Place this folder in Factorio's `mods` directory. Keep it unzipped for development; only official mods are zip folders.
+
 ## 3. Tag and release on GitHub
 
 1. Tag the release commit: `git tag v<version>` (e.g. `v0.1.0`), then
