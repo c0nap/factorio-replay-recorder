@@ -2,7 +2,7 @@
 
 Concise reference for cutting a GitHub release. Not published to the
 Factorio mod portal yet - that's planned for 1.0 (see
-[`changelog.md`](../changelog.md)).
+[`changelog.md`](changelog.md)).
 
 ## 1. Bump the version
 
@@ -51,7 +51,7 @@ Place this folder in Factorio's `mods` directory. Keep it unzipped for developme
    `git push origin v<version>`.
 2. Create a GitHub release from that tag.
 3. Use the matching point-release section from
-   [`changelog.md`](../changelog.md) as the release notes.
+   [`changelog.md`](changelog.md) as the release notes.
 4. Attach the zip built in step 2 as a release asset.
 
 That's it - no mod portal upload, no forum post, until 1.0.

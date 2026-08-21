@@ -51,5 +51,5 @@ scripting the [testing checklist](testing-checklist.md).
 **This is not yet confirmed to work.** It's not established whether the
 headless binary supports replay playback the same way the desktop client
 does. Until that's confirmed, treat this as the goal for a future
-release (see [`changelog.md`](../changelog.md)) rather than a supported
+release (see [`changelog.md`](changelog.md)) rather than a supported
 workflow today - use option 2 in the meantime.

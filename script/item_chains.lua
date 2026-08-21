@@ -85,6 +85,25 @@ local function belt_neighbour_entities(entity)
     return out
 end
 
+-- Shared by servicing_inserters/inserter_targets below: a pcall-guarded
+-- find_entities_filtered near a position, logging (via log_fail) and
+-- returning {} on failure instead of each call site repeating its own
+-- copy of the same pcall+search+log pattern. `extra_filter` merges
+-- additional find_entities_filtered keys (e.g. `type`) on top of
+-- position/radius.
+local function find_entities_near(entity, position, radius, extra_filter)
+    local filter = {position = position, radius = radius}
+    if extra_filter then
+        for k, v in pairs(extra_filter) do filter[k] = v end
+    end
+    local ok, found = pcall(function() return entity.surface.find_entities_filtered(filter) end)
+    if not ok then
+        log_fail("find_entities_filtered near " .. entity.name, found)
+        return {}
+    end
+    return found
+end
+
 -- Inserters have pickup_target/drop_target (confirmed, read directly in
 -- inserter_targets below); chests have no equivalent "what am I connected
 -- to" query, so discovering which inserters service a given chest means
@@ -96,24 +115,16 @@ end
 -- actual correctness comes entirely from the pickup_target/drop_target
 -- identity check below, which is confirmed API, not a guess.
 local function servicing_inserters(entity)
-    local ok, found = pcall(function()
-        return entity.surface.find_entities_filtered{
-            position = entity.position, radius = Config.inserter_search_radius(), type = "inserter"
-        }
-    end)
-    if not ok then
-        log_fail("find_entities_filtered (servicing_inserters) around " .. entity.name, found)
-        return {}
-    end
+    local found = find_entities_near(entity, entity.position, Config.inserter_search_radius(), {type = "inserter"})
 
     local out = {}
     for _, inserter in ipairs(found) do
         if inserter.valid then
-            local pt_ok, pickup = pcall(function() return inserter.pickup_target end)
-            if not pt_ok then log_fail("inserter.pickup_target", pickup) end
-            local dt_ok, drop = pcall(function() return inserter.drop_target end)
-            if not dt_ok then log_fail("inserter.drop_target", drop) end
-            if (pt_ok and pickup == entity) or (dt_ok and drop == entity) then
+            local pickup_ok, pickup = pcall(function() return inserter.pickup_target end)
+            if not pickup_ok then log_fail("inserter.pickup_target", pickup) end
+            local drop_ok, drop = pcall(function() return inserter.drop_target end)
+            if not drop_ok then log_fail("inserter.drop_target", drop) end
+            if (pickup_ok and pickup == entity) or (drop_ok and drop == entity) then
                 table.insert(out, inserter)
             end
         end
@@ -123,46 +134,38 @@ end
 
 local function inserter_targets(entity)
     local out = {}
-    local pt_ok, pickup = pcall(function() return entity.pickup_target end)
-    if pt_ok and pickup and pickup.valid then
+    local pickup_ok, pickup = pcall(function() return entity.pickup_target end)
+    if pickup_ok and pickup and pickup.valid then
         table.insert(out, pickup)
-    elseif not pt_ok then
+    elseif not pickup_ok then
         log_fail("entity.pickup_target", pickup)
     end
 
-    local dt_ok, drop = pcall(function() return entity.drop_target end)
-    if dt_ok and drop and drop.valid then
+    local drop_ok, drop = pcall(function() return entity.drop_target end)
+    if drop_ok and drop and drop.valid then
         table.insert(out, drop)
-    elseif not dt_ok then
+    elseif not drop_ok then
         log_fail("entity.drop_target", drop)
     end
 
     -- No direct target entity (e.g. dropping onto a bare belt tile rather
     -- than a specific entity) - fall back to whatever's physically at the
     -- pickup/drop position.
-    if not (pt_ok and pickup) then
+    if not (pickup_ok and pickup) then
         local pos_ok, pos = pcall(function() return entity.pickup_position end)
         if not pos_ok then log_fail("entity.pickup_position", pos) end
         if pos_ok and pos then
-            local ok, near = pcall(function() return entity.surface.find_entities_filtered{position = pos, radius = 0.5} end)
-            if not ok then log_fail("find_entities_filtered at pickup_position", near) end
-            if ok then
-                for _, e in ipairs(near) do
-                    if e.valid and e.unit_number ~= entity.unit_number then table.insert(out, e) end
-                end
+            for _, e in ipairs(find_entities_near(entity, pos, 0.5)) do
+                if e.valid and e.unit_number ~= entity.unit_number then table.insert(out, e) end
             end
         end
     end
-    if not (dt_ok and drop) then
+    if not (drop_ok and drop) then
         local pos_ok, pos = pcall(function() return entity.drop_position end)
         if not pos_ok then log_fail("entity.drop_position", pos) end
         if pos_ok and pos then
-            local ok, near = pcall(function() return entity.surface.find_entities_filtered{position = pos, radius = 0.5} end)
-            if not ok then log_fail("find_entities_filtered at drop_position", near) end
-            if ok then
-                for _, e in ipairs(near) do
-                    if e.valid and e.unit_number ~= entity.unit_number then table.insert(out, e) end
-                end
+            for _, e in ipairs(find_entities_near(entity, pos, 0.5)) do
+                if e.valid and e.unit_number ~= entity.unit_number then table.insert(out, e) end
             end
         end
     end
@@ -284,10 +287,10 @@ local function walk_chain(seeds, zone_center, is_zone_active)
 
     if #near_belts > 0 then TrackerEvents.log_belt_contents(near_belts) end
     for _, c in ipairs(near_containers) do
-        TrackerEvents.log_inventory_delta("container_" .. c.unit_number, "container", TrackerEvents.container_contents(c))
+        TrackerEvents.log_inventory_delta(TrackerEvents.container_owner_key(c.unit_number), "container", TrackerEvents.container_contents(c))
     end
     for _, i in ipairs(near_inserters) do
-        TrackerEvents.log_inventory_delta("inserter_" .. i.unit_number, "inserter_hand", TrackerEvents.held_stack_contents(i))
+        TrackerEvents.log_inventory_delta(TrackerEvents.inserter_owner_key(i.unit_number), "inserter_hand", TrackerEvents.held_stack_contents(i))
     end
 
     return rollup

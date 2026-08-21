@@ -10,6 +10,7 @@ local Exporter = require("script.exporter")
 local Config = require("script.config")
 local Classify = require("script.classify")
 local Logistics = require("script.logistics")
+local Keys = require("script.keys")
 
 local CombatZones = {}
 
@@ -27,7 +28,7 @@ function CombatZones.init()
 end
 
 local function chunk_id(surface, chunk_x, chunk_y)
-    return string.format("%s_%d_%d", surface.name, chunk_x, chunk_y)
+    return Keys.join(surface.name, chunk_x, chunk_y)
 end
 
 -- Factorio's chunk coordinates are tile-position divided by 32; floor
@@ -104,10 +105,10 @@ end
 -- we've actually recorded (i.e. ones near a fight a player took part in) -
 -- clustering the whole map's nest layout would mean scanning terrain no
 -- player ever visited, which is exactly what the cropping system exists to
--- avoid.
-local NEST_CLUSTER_RADIUS = 20
-
-local function cluster_spawners(spawners)
+-- avoid. Radius is user-tunable (Config.nest_cluster_radius()) since, like
+-- combat_radius/inserter_search_radius, it directly shapes what a viewer
+-- sees in the replay - not a cosmetic constant.
+local function cluster_spawners(spawners, radius)
     local cluster_of = {}
     for i = 1, #spawners do cluster_of[i] = i end
 
@@ -123,7 +124,7 @@ local function cluster_spawners(spawners)
         for j = i + 1, #spawners do
             local dx = spawners[i].position.x - spawners[j].position.x
             local dy = spawners[i].position.y - spawners[j].position.y
-            if (dx * dx + dy * dy) <= (NEST_CLUSTER_RADIUS * NEST_CLUSTER_RADIUS) then
+            if (dx * dx + dy * dy) <= (radius * radius) then
                 cluster_of[find(i)] = find(j)
             end
         end
@@ -185,7 +186,7 @@ local function dump_static_chunk_data(surface, chunk_x, chunk_y)
         end
     end
 
-    cluster_spawners(spawners)
+    cluster_spawners(spawners, Config.nest_cluster_radius())
 
     -- 3. Storage/provider/requester containers within logistic reach of
     -- this chunk (design doc: "chests within logistic reach of the

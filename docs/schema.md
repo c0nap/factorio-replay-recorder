@@ -2,7 +2,7 @@
 
 This is the contract downstream tools (visualizers, converters, analyzers)
 should code against. It covers the 0.1 release. Expect additions in later
-0.x releases (see [`changelog.md`](../changelog.md)), but the shape
+0.x releases (see [`changelog.md`](changelog.md)), but the shape
 described here - the envelope, and the fields already documented for each
 event `type` - is not expected to change out from under existing
 consumers within the 0.x line.

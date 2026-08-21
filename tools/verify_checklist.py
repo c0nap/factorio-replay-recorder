@@ -19,8 +19,10 @@ import collections
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from inspect_replay import default_replay_path, load_events  # noqa: E402
+# No sys.path manipulation needed: running this script directly (as
+# documented above) already puts its own directory - tools/ - at the
+# front of sys.path, which is where inspect_replay.py lives too.
+from inspect_replay import default_replay_path, load_events
 
 
 def _count(events, etype):

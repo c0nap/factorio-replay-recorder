@@ -25,6 +25,7 @@
 -- rate, not size.
 local TrackerEvents = require("script.tracker_events")
 local Config = require("script.config")
+local Keys = require("script.keys")
 
 local Logistics = {}
 
@@ -153,7 +154,7 @@ function Logistics.tick(active_zones, is_zone_active, chunk_area_fn)
             local area = chunk_area_fn(zone.chunk_x, zone.chunk_y)
             local found = find_networks(zone.surface, area, force_names)
             for network_id, network in pairs(found) do
-                local key = zone.surface.name .. "_" .. network.force.name .. "_" .. network_id
+                local key = Keys.join(zone.surface.name, network.force.name, network_id)
                 networks_this_tick[key] = network
 
                 if (network.all_logistic_robots + network.all_construction_robots) > 0 then
@@ -179,7 +180,7 @@ function Logistics.tick(active_zones, is_zone_active, chunk_area_fn)
                         and not is_zone_active(entity.surface, entity.position) then
                         seen[entity.unit_number] = true
                         TrackerEvents.log_inventory_delta(
-                            "container_" .. entity.unit_number,
+                            TrackerEvents.container_owner_key(entity.unit_number),
                             "container",
                             TrackerEvents.container_contents(entity)
                         )

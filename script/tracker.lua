@@ -8,6 +8,7 @@ local CombatZones = require("script.combat_zones")
 local TrackerEvents = require("script.tracker_events")
 local Classify = require("script.classify")
 local Config = require("script.config")
+local Keys = require("script.keys")
 
 local Tracker = {}
 
@@ -38,31 +39,33 @@ local function record_kill_stat(entity)
     if not kind then return end
 
     local size = Classify.size_of(entity.name)
-    local key = kind .. "_" .. size
+    local key = Keys.join(kind, size)
     storage.stats.kills[key] = (storage.stats.kills[key] or 0) + 1
 
     return kind, size
 end
 
--- storage.inventory_cache key prefix per entity type whose owner_key is
--- "<prefix><unit_number>" - used to clean up on death so a long-dead
--- entity's cache entry doesn't linger for the rest of the save. item-entity
+-- storage.inventory_cache owner-key constructor per entity type - used to
+-- clean up on death so a long-dead entity's cache entry doesn't linger for
+-- the rest of the save. Reuses the same TrackerEvents.*_owner_key
+-- constructors every owner-key call site does, so a cleanup entry can
+-- never drift out of sync with how the key was actually built. item-entity
 -- is deliberately NOT here - on_entity_died only covers destruction (fire/
 -- explosion), not the far more common "picked up by walking over it" case,
 -- so ground items use the strictly more general
 -- register_on_object_destroyed/on_object_destroyed mechanism instead (see
 -- TrackerEvents.on_object_destroyed), which covers every removal cause in
 -- one place rather than needing two.
-local CACHE_CLEANUP_PREFIX = {
-    ["car"] = "vehicle_",
-    ["spider-vehicle"] = "vehicle_",
-    ["cargo-wagon"] = "vehicle_",
-    ["artillery-wagon"] = "vehicle_",
-    ["container"] = "container_",
-    ["logistic-container"] = "container_",
-    ["construction-robot"] = "robot_",
-    ["logistic-robot"] = "robot_",
-    ["inserter"] = "inserter_",
+local CACHE_CLEANUP_KEY_FN = {
+    ["car"] = TrackerEvents.vehicle_owner_key,
+    ["spider-vehicle"] = TrackerEvents.vehicle_owner_key,
+    ["cargo-wagon"] = TrackerEvents.vehicle_owner_key,
+    ["artillery-wagon"] = TrackerEvents.vehicle_owner_key,
+    ["container"] = TrackerEvents.container_owner_key,
+    ["logistic-container"] = TrackerEvents.container_owner_key,
+    ["construction-robot"] = TrackerEvents.robot_owner_key,
+    ["logistic-robot"] = TrackerEvents.robot_owner_key,
+    ["inserter"] = TrackerEvents.inserter_owner_key,
 }
 
 function Tracker.on_entity_died(event)
@@ -112,8 +115,8 @@ function Tracker.on_entity_died(event)
         record_score_event(entity, killer_data)
     end
 
-    local cleanup_prefix = CACHE_CLEANUP_PREFIX[entity.type]
-    if cleanup_prefix and entity.unit_number then
+    local cleanup_key_fn = CACHE_CLEANUP_KEY_FN[entity.type]
+    if cleanup_key_fn and entity.unit_number then
         -- Otherwise every vehicle/container/robot/inserter that's ever
         -- been near a player leaves a permanent entry behind, growing the
         -- save forever over a long campaign even though the entity itself
@@ -121,7 +124,7 @@ function Tracker.on_entity_died(event)
         -- they don't fire on_entity_died when they eventually decay/expire,
         -- they fire on_character_corpse_expired instead (see
         -- Tracker.on_character_corpse_expired below).
-        storage.inventory_cache[cleanup_prefix .. entity.unit_number] = nil
+        storage.inventory_cache[cleanup_key_fn(entity.unit_number)] = nil
     end
 
     if entity.type == "unit" and entity.unit_number then
@@ -173,7 +176,7 @@ end
 -- tick, so the pair uniquely and stably identifies one corpse for its
 -- whole lifetime regardless of whether unit_number is ever populated.
 local function corpse_owner_key(corpse)
-    return "corpse_" .. corpse.character_corpse_player_index .. "_" .. corpse.character_corpse_tick_of_death
+    return Keys.join("corpse", corpse.character_corpse_player_index, corpse.character_corpse_tick_of_death)
 end
 
 -- Player corpses do NOT go through on_entity_died/on_post_entity_died at
@@ -449,9 +452,9 @@ local function scan_physical_items(surface, area)
             end
         elseif ent.valid and ent.unit_number then
             if ent.type == "container" or ent.type == "logistic-container" then
-                TrackerEvents.log_inventory_delta("container_" .. ent.unit_number, "container", TrackerEvents.container_contents(ent))
+                TrackerEvents.log_inventory_delta(TrackerEvents.container_owner_key(ent.unit_number), "container", TrackerEvents.container_contents(ent))
             elseif ent.type == "inserter" then
-                TrackerEvents.log_inventory_delta("inserter_" .. ent.unit_number, "inserter_hand", TrackerEvents.held_stack_contents(ent))
+                TrackerEvents.log_inventory_delta(TrackerEvents.inserter_owner_key(ent.unit_number), "inserter_hand", TrackerEvents.held_stack_contents(ent))
             end
         end
     end
@@ -478,11 +481,11 @@ local function process_mobile_entities(entities, mobile_data)
             table.insert(mobile_data, record)
 
             if VEHICLE_INVENTORY_SLOTS[ent.type] then
-                TrackerEvents.log_inventory_delta("vehicle_" .. ent.unit_number, "vehicle", vehicle_inventory_contents(ent))
+                TrackerEvents.log_inventory_delta(TrackerEvents.vehicle_owner_key(ent.unit_number), "vehicle", vehicle_inventory_contents(ent))
             elseif ent.type == "construction-robot" or ent.type == "logistic-robot" then
                 local inv = ent.get_inventory(defines.inventory.robot_cargo)
                 if inv then
-                    TrackerEvents.log_inventory_delta("robot_" .. ent.unit_number, "robot", TrackerEvents.flatten_contents(inv.get_contents()))
+                    TrackerEvents.log_inventory_delta(TrackerEvents.robot_owner_key(ent.unit_number), "robot", TrackerEvents.flatten_contents(inv.get_contents()))
                 end
             end
         end

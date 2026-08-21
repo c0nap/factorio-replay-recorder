@@ -17,7 +17,7 @@ enough to publish to the Factorio mod portal and forums.
 The foundation: track what's moving (characters, vehicles, biters),
 what's changing hands (inventories, fluids), and what's happening to
 whom (attacks, effects), cropped to wherever combat is actually
-happening. Establishes the [JSON schema](docs/schema.md) downstream
+happening. Establishes the [JSON schema](schema.md) downstream
 tools can start building against.
 
 <details>

@@ -66,21 +66,11 @@ end
 -- what froze the game for multiple seconds; draining a bounded number per
 -- tick instead spreads that same total cost across many ticks so no
 -- single tick pays for more than this many chunks' worth of engine calls.
---
--- Lowered from 20 to 8, then to 3, then to 2: even after the first two
--- rounds of lowering this, a real full-recording session still showed a
--- ~49-tick stutter (~0.8s, single ticks over 350ms) right at the moment
--- full recording turned on. It turned out the reordering fix that used to
--- be described here didn't actually decouple anything - see control.lua's
--- on_tick for why, and for the real fix (alternating backfill ticks and
--- flush ticks instead of just reordering within one). This value only
--- controls how much SCAN work one backfill tick does; with a genuinely
--- separate tick to itself now, 2 chunks/tick keeps even that isolated
--- cost small, in exchange for the backfill queue draining more slowly
--- overall. NOTE: an existing save keeps whatever value this setting was
+-- Tuning history (why the default landed at 2) is in git log/PR history,
+-- not here. NOTE: an existing save keeps whatever value this setting was
 -- last explicitly set to, even across a mod update that changes this
 -- default - if a real run doesn't show the expected drop, check
--- diagnostics_enabled's log output (now includes backfill_remaining) to
+-- diagnostics_enabled's log output (includes backfill_remaining) to
 -- confirm the ACTUAL in-effect value, not just this file's default.
 function Config.chunk_backfill_per_tick()
     return settings.global["rrec-chunk-backfill-per-tick"].value
@@ -119,23 +109,71 @@ end
 -- guess) that a single flush call writing an unbounded backlog - e.g. the
 -- ~800 chunk_snapshot events a full-recording backfill burst can queue up
 -- before the first flush even fires - is what actually froze the game for
--- multiple seconds, not the backfill's own per-chunk scanning.
---
--- Lowered from 25 to 10, then to 3, then to 2. Each buffered chunk_snapshot
--- is heavy enough on its own (tiles + statics + logistics, serialized as
--- JSON) that the entry COUNT this caps matters as much as the interval
--- Config.flush_interval_ticks() caps - smaller flushes mean more of them,
--- but each one is cheap enough that no single tick should stand out. See
--- control.lua's on_tick for the other half of this fix: a flush is now
--- alternated onto its own tick, never sharing one with a backfill scan,
--- which turned out to matter more than this value alone did. NOTE: an
--- existing save keeps whatever value this setting was last explicitly set
--- to, even across a mod update that changes this default - if a real run
--- doesn't show the expected drop, check diagnostics_enabled's log output
--- (now includes buffer_size) to confirm the ACTUAL in-effect value, not
--- just this file's default.
+-- multiple seconds, not the backfill's own per-chunk scanning. See
+-- control.lua's on_tick for the other half of this fix: a flush is
+-- alternated onto its own tick, never sharing one with a backfill scan.
+-- Tuning history (why the default landed at 2) is in git log/PR history,
+-- not here. NOTE: an existing save keeps whatever value this setting was
+-- last explicitly set to, even across a mod update that changes this
+-- default - if a real run doesn't show the expected drop, check
+-- diagnostics_enabled's log output (includes buffer_size) to confirm the
+-- ACTUAL in-effect value, not just this file's default.
 function Config.max_buffered_events()
     return settings.global["rrec-max-buffered-events"].value
+end
+
+-- Radius (tiles) single-linkage nest clustering uses to group spawners
+-- captured in the same chunk_snapshot into rough "bases" - see
+-- script/combat_zones.lua's cluster_spawners. User-tunable like
+-- combat_radius/inserter_search_radius since it directly shapes what a
+-- viewer sees (the `cluster` field on spawner statics), not a cosmetic
+-- constant.
+function Config.nest_cluster_radius()
+    return settings.global["rrec-nest-cluster-radius"].value
+end
+
+-- Internal tuning constants below this point are NOT backed by a mod
+-- setting - unlike everything above, none of them affect what ends up in
+-- replay.json, so there's nothing here worth exposing in the settings
+-- menu. They're centralized here anyway so nothing in the mod hardcodes
+-- its own copy.
+
+-- Backfill/flush tick alternation (see control.lua's on_tick): every Nth
+-- tick alternates between draining the full-recording backfill queue and
+-- checking for a threshold-triggered flush, so the two heaviest per-tick
+-- operations never land in the same tick.
+function Config.backfill_flush_alternation_period()
+    return 2
+end
+
+-- The fixed-interval flush is offset by this fraction of its own period
+-- rather than checked at game.tick % interval == 0 directly, so it
+-- doesn't land on the same tick as the distant-sample interval every
+-- single time when the two are configured to the same period - see
+-- control.lua's on_tick.
+function Config.flush_stagger_fraction()
+    return 0.5
+end
+
+-- script/battlefield_marker.lua's redraw cadence, marker lifetime, and
+-- line styling - purely cosmetic (the marker is a manual-testing visual
+-- aid with no effect on what gets recorded, see the README), so these
+-- stay plain constants rather than settings.global-backed like the marker
+-- on/off toggle itself (Config.battlefield_marker_enabled()).
+function Config.battlefield_marker_recompute_interval_ticks()
+    return 60
+end
+
+function Config.battlefield_marker_time_to_live_ticks()
+    return 90
+end
+
+function Config.battlefield_marker_line_color()
+    return {r = 0.2, g = 1, b = 1, a = 1}
+end
+
+function Config.battlefield_marker_line_width()
+    return 3
 end
 
 return Config

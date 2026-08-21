@@ -27,6 +27,7 @@
 -- until a real reverse-index lookup is confirmed.
 local TrackerEvents = require("script.tracker_events")
 local Config = require("script.config")
+local Keys = require("script.keys")
 
 local FluidChains = {}
 
@@ -103,7 +104,7 @@ local function discover_component(start_entity, start_index, visited_boxes)
 
     while #stack > 0 do
         local current = table.remove(stack)
-        local key = current.entity.unit_number .. "_" .. current.index
+        local key = Keys.join(current.entity.unit_number, current.index)
         if not visited_boxes[key] then
             visited_boxes[key] = true
             table.insert(component, current)
@@ -112,7 +113,7 @@ local function discover_component(start_entity, start_index, visited_boxes)
                 local count_ok, count = pcall(function() return neighbour_entity.fluids_count end)
                 if count_ok and count then
                     for n_index = 1, count do
-                        local n_key = neighbour_entity.unit_number .. "_" .. n_index
+                        local n_key = Keys.join(neighbour_entity.unit_number, n_index)
                         if not visited_boxes[n_key] then
                             table.insert(stack, {entity = neighbour_entity, index = n_index})
                         end
@@ -147,7 +148,7 @@ local function process_zone(surface, area, visited_boxes, reported)
             end
             if count_ok and count and count > 0 then
                 for index = 1, count do
-                    local key = seed.unit_number .. "_" .. index
+                    local key = Keys.join(seed.unit_number, index)
                     if not visited_boxes[key] then
                         local component = discover_component(seed, index, visited_boxes)
                         local rep = component[1]
@@ -181,11 +182,11 @@ local function process_zone(surface, area, visited_boxes, reported)
                                 end
                                 if contents_ok and contents then
                                     for fluid_name, amount in pairs(contents) do
-                                        local report_key = rep.entity.unit_number .. "_" .. fluid_name
+                                        local report_key = Keys.join(rep.entity.unit_number, fluid_name)
                                         if not reported[report_key] then
                                             reported[report_key] = true
                                             TrackerEvents.log_fluid_delta(
-                                                "fluid_" .. rep.entity.unit_number .. "_" .. fluid_name,
+                                                Keys.join("fluid", rep.entity.unit_number, fluid_name),
                                                 {[fluid_name] = rounded(amount)},
                                                 {position = rep.entity.position}
                                             )
