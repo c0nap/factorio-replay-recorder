@@ -21,7 +21,7 @@ happening. Establishes the [JSON schema](docs/schema.md) downstream
 tools can start building against.
 
 <details>
-<summary><strong>0.1.0</strong> — 2026-08-07</summary>
+<summary><strong>0.1.0</strong> — 2026-08-21</summary>
 
 **Added**
 - Recording turns on for a chunk only once a player (on foot, driving,
