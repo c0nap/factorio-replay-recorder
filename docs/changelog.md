@@ -58,76 +58,72 @@ tools can start building against.
 
 </details>
 
-<details open>
-<summary><strong>0.1.1</strong> — in progress</summary>
+<details>
+<summary><strong>0.1.1</strong> — 2026-08-22</summary>
 
-Consistency cleanup and closing the schema-accuracy gaps found while
-writing `docs/schema.md`. No new tracked data. Not yet released; kept
-open by default here since it isn't done yet.
+A consistency and accuracy pass - no new tracked data, but a few real
+fixes to what's already tracked.
 
-**Changed**
-- Centralized composite-key building (`script/keys.lua`) and owner-key
-  construction (`vehicle_`/`container_`/`robot_`/`inserter_`/
-  `ground_item_` prefixes) into two shared helpers, replacing hand-rolled
-  concatenation that used to live independently in `combat_zones.lua`,
-  `logistics.lua`, `tracker.lua`, and `item_chains.lua`.
-- Standardized `pcall` result-variable naming across `tracker_events.lua`/
-  `item_chains.lua`, and deduplicated `item_chains.lua`'s belt/inserter
-  fallback search into one shared helper.
-- Promoted nest cluster radius to a real user-facing setting (it directly
-  shapes recorded data, like combat radius does); moved the battlefield
-  marker's purely-cosmetic constants (redraw cadence, TTL, line styling)
-  behind `Config` instead of leaving them hardcoded.
-- Routed `control.lua`'s backfill/flush tick-alternation and flush
-  stagger fraction through named `Config` getters instead of inline
-  magic numbers; trimmed `config.lua`'s multi-round tuning-history
-  comments down to a pointer at git history.
-- `docs/schema.md` now documents fields it was missing (`chunk_snapshot`/
-  `item_distribution`'s `chunk`/`surface` wrapper, `player_respawn`'s
-  `force`, `damage_event`'s `target_type`/`position`) and names the
-  literal JSON keys for its list-shaped fields instead of describing them
-  in prose.
-- Root-caused (not just muted) the `fluid_chains.lua` "index out of
-  range" mismatch: `LuaEntity::fluids_count`'s own docs confirm it also
-  counts non-fluidbox storages (a fluid turret's internal ammo buffer,
-  a fluid wagon's contents) that `entity.fluidbox` has no slot for -
-  every fluidbox-bounded loop now uses `#entity.fluidbox` (its own
-  confirmed length operator) instead, so the mismatch can't occur in the
-  first place. The entity-name-based mute/suppress logic this used to
-  need is gone.
-- `fluid_chains.lua` now walks the exact pipe network instead of guessing:
-  `LuaFluidBox::get_pipe_connections` (confirmed) returns each
-  connection's target box *and* its exact index within its own owner, so
-  a multi-fluidbox entity's independent sides (e.g. a pump's two ends)
-  no longer get merged into one reported segment the way the previous
-  guess-every-index version could.
-- `combat_zones.lua`'s `is_player_nearby`/`trigger_combat_at` are local
-  functions now instead of public `CombatZones.*` members - neither was
-  ever called from outside this file.
-- Added locale text for the 10 mod settings that had none (they were
-  showing up as raw internal names like `rrec-chain-near-hops` in
-  Factorio's settings menu instead of a readable name/description).
-- Removed a stale "goal reset" comment left over from the removed
-  scoring framing.
+**Fixed**
+- Fluid tracking near flamethrower turrets and other buildings with more
+  than one internal fluid connection (like pumps) is now fully accurate.
+  Previously, a mismatch in how the game reports fluid storage counts
+  could suppress fluid data around a flamethrower turret, and a pump's
+  two independent sides could get merged together into a single
+  reported fluid reading instead of staying separate.
+- Every mod setting now shows a proper name and description in
+  Factorio's settings menu - several previously showed only their raw
+  internal ID (e.g. `rrec-chain-near-hops`).
+- `docs/schema.md` now lists every field several event types actually
+  contain - it previously undersold `chunk_snapshot`, `item_distribution`,
+  `player_respawn`, and `damage_event`.
+
+**Added**
+- A "Nest cluster radius" setting, so how nearby nests get grouped into
+  a rough "base" in a chunk snapshot is now tunable, the same way combat
+  detection radius already was.
 
 **Removed**
-- Dead "permanent zone" cleanup code (`CombatZones.expire_permanent_zones`
-  and its `zone.permanent` checks): no released version of this mod has
-  ever set that flag - full recording mode's chunk activation was
-  already changed, before 0.1.0 shipped, to never add a
-  `storage.active_zones` entry at all, so the flag it existed to migrate
-  away from was already unreachable in the first public release.
-- `score_update` - keeping a running per-force death tally isn't this
-  recorder's job. `death_event` already names the victim's force and,
-  when known, the killer's, which is the attribution a downstream tool
-  actually needs; `tools/inspect_replay.py`'s scoreboard summary is now
-  computed straight from `death_event` instead of a dedicated event.
+- The `score_update` event. Keeping a running per-force death count
+  isn't this recorder's job - `death_event` already names the victim's
+  force and, when known, the killer's, so that attribution is still
+  fully available, just without a separate running tally. Downstream
+  tooling reading `score_update` will need updating; the included
+  `tools/inspect_replay.py` already computes the same "deaths by force"
+  summary directly from `death_event` instead.
+  - The testing checklist's automated check for `score_update` was
+    removed along with the event - a checklist run against 0.1.1
+    correctly reports 29/29 passing instead of 30/30. That's expected,
+    not a regression.
 
-**Planned (not yet implemented)**
-- `inspect_replay.py`'s battlefield-cluster lookup keys on chunk
-  coordinates alone, dropping the surface - activity on two surfaces
-  that happen to share chunk coordinates can be misattributed to the
-  wrong cluster.
+**Internal / code changes**
+
+Everything below is implementation detail - not user-facing, listed
+here for anyone working on the mod itself:
+
+- Root-caused (rather than just muted) the fluid tracking mismatch
+  above: `LuaEntity::fluids_count` counts some non-fluidbox storages
+  (e.g. a fluid turret's internal ammo buffer) that `entity.fluidbox`
+  has no slot for; every fluidbox-bounded loop in `fluid_chains.lua` now
+  uses `#entity.fluidbox` (its own length operator) instead, and the
+  pipe-network walk uses `LuaFluidBox::get_pipe_connections` for an
+  exact connected index instead of guessing a neighbor's entire index
+  range.
+- Centralized composite-key building (`script/keys.lua`) and owner-key
+  construction (`TrackerEvents.*_owner_key`) into two shared helpers,
+  replacing hand-rolled string concatenation that used to live
+  independently in several files.
+- Standardized `pcall` result-variable naming, and deduplicated a
+  repeated search pattern in `item_chains.lua`.
+- Routed remaining hardcoded tuning constants (backfill/flush timing,
+  battlefield-marker styling) through `Config`; trimmed `config.lua`'s
+  multi-round tuning-history comments down to a pointer at git history.
+- Removed dead code: `CombatZones.expire_permanent_zones` (unreachable -
+  no released version of this mod has ever produced the state it existed
+  to clean up), and two functions that turned out to only ever be called
+  from within their own file are now local instead of public.
+- Assorted stale-comment cleanup (a leftover "goal reset" sports
+  metaphor from the removed scoring framing, among others).
 
 </details>
 
@@ -253,6 +249,13 @@ hand-maintained knowledge of exact prototype names/fields, and handling
 Space Age and the quality system as the first real test of that
 generalization. Lays the groundwork v0.5's multi-version adapters will
 build on, without committing to multi-version support itself yet.
+
+- **Multi-surface accuracy.** Most events don't carry an explicit
+  surface field (only `chunk_snapshot` and `item_distribution` do), so
+  downstream tooling like `tools/inspect_replay.py`'s battlefield
+  clustering currently assumes a single surface - harmless today, but
+  worth revisiting once Space Age's multiple real surfaces make that
+  assumption wrong in practice.
 
 ## v0.5 — Multi-Version Support
 

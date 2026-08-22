@@ -24,7 +24,8 @@ just enemies.
 ## Before you start
 
 1. **Install the mod.** Copy this repo's contents into a folder named
-   `replay-recorder_0.1.0` (matching `info.json`) inside your Factorio
+   `replay-recorder_<version>`, matching the `name`/`version` in
+   `info.json` (e.g. `replay-recorder_0.1.1`), inside your Factorio
    `mods` directory - see the README's [Installation](../README.md#installation)
    section.
 2. **Start a new save.** Pick a spawn with a reasonably large flat/land
