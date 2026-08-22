@@ -56,13 +56,6 @@ tools can start building against.
 - Ground items dropped by a player are tracked from creation to removal,
   the same way a corpse's contents are tracked from death to decay.
 
-**Fixed**
-- Recording no longer resets when mod settings change mid-campaign.
-- Full recording mode's zones correctly stop recording again after the
-  setting is turned back off.
-- Reduced memory growth during long sessions.
-- Large recordings export noticeably faster.
-
 </details>
 
 <details open>
