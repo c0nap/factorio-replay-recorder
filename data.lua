@@ -19,23 +19,35 @@
 -- vanilla prototypes (atomic bombs, capsules, lasers, ...) have an
 -- action/delivery/effects shape this wrapping logic doesn't expect, and
 -- pairs() over those can yield a non-table value that would otherwise
--- crash the data stage entirely.
+-- crash the data stage entirely. Logs each mismatch (matching
+-- data-updates.lua's flag_action/flag_field, which walk the same
+-- action/delivery shape for a different purpose) rather than silently
+-- skipping it, so a genuinely exotic prototype shape leaves a trace.
 local function inject_script_trigger(prototype)
     if not prototype.action then return end
 
     -- Factorio actions can be a single table or an array of tables
     local actions = prototype.action
     if type(actions) == "table" and not actions[1] then actions = {actions} end
-    if type(actions) ~= "table" then return end
+    if type(actions) ~= "table" then
+        log("[replay-recorder] data: " .. prototype.name .. ".action is a " .. type(actions) .. ", not a table - skipped")
+        return
+    end
 
     for _, action in pairs(actions) do
-        if type(action) == "table" and action.action_delivery then
+        if type(action) ~= "table" then
+            log("[replay-recorder] data: " .. prototype.name .. " has a non-table action entry (" .. type(action) .. ") - skipped")
+        elseif action.action_delivery then
             local deliveries = action.action_delivery
             if type(deliveries) == "table" and not deliveries[1] then deliveries = {deliveries} end
 
-            if type(deliveries) == "table" then
+            if type(deliveries) ~= "table" then
+                log("[replay-recorder] data: " .. prototype.name .. ".action_delivery is a " .. type(deliveries) .. ", not a table - skipped")
+            else
                 for _, delivery in pairs(deliveries) do
-                    if type(delivery) == "table" then
+                    if type(delivery) ~= "table" then
+                        log("[replay-recorder] data: " .. prototype.name .. " has a non-table delivery entry (" .. type(delivery) .. ") - skipped")
+                    else
                         -- Append a script trigger effect to the delivery. The
                         -- weapon's own prototype name is baked into the effect_id
                         -- (rather than sent as separate data, which script triggers

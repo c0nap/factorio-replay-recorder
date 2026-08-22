@@ -56,13 +56,11 @@ script.on_event(defines.events.on_runtime_mod_setting_changed, function(event)
 
     if Config.full_recording_mode() then
         CombatZones.queue_full_recording_backfill()
-    else
-        -- Switching back to cropped mode: zones full recording opened stay
-        -- open forever otherwise, since they were marked permanent instead
-        -- of given a timeout. Give them a normal timeout so they wind down
-        -- like any other zone instead of recording everything forever.
-        CombatZones.expire_permanent_zones()
     end
+    -- Switching back to cropped mode needs no cleanup here: full recording
+    -- mode's chunk activation never adds a storage.active_zones entry in
+    -- the first place (see CombatZones.activate_full_recording_chunk), so
+    -- there's nothing left open to wind down.
 end)
 
 -- Main Loop. Factorio runs at 60 ticks/second.
@@ -95,18 +93,19 @@ script.on_event(defines.events.on_tick, function()
     -- landing on a backfill tick just defers it one tick, same as any
     -- other skipped check.
     local backfill_pending = storage.pending_backfill and #storage.pending_backfill > 0
-    local is_backfill_tick = backfill_pending and (game.tick % 2 == 0)
+    local is_backfill_tick = backfill_pending and (game.tick % Config.backfill_flush_alternation_period() == 0)
 
-    -- The fixed-interval trigger is offset by half its own period rather
-    -- than checked at game.tick % interval == 0 directly: the checklist
-    -- (and plenty of real configs) sets the distant-sample interval to
-    -- the same period as the flush interval, so an unstaggered flush
-    -- would land on the exact same tick as Logistics/ItemChains/
+    -- The fixed-interval trigger is offset by a fraction of its own period
+    -- rather than checked at game.tick % interval == 0 directly: the
+    -- checklist (and plenty of real configs) sets the distant-sample
+    -- interval to the same period as the flush interval, so an unstaggered
+    -- flush would land on the exact same tick as Logistics/ItemChains/
     -- FluidChains.tick() below every single time, compounding two
     -- separate periodic costs instead of spreading them out - visible in
     -- real data as repeated ~15-30ms streaks outside the backfill burst.
     local flush_interval = Config.flush_interval_ticks()
-    local on_fixed_interval = (game.tick + math.floor(flush_interval / 2)) % flush_interval == 0
+    local stagger = math.floor(flush_interval * Config.flush_stagger_fraction())
+    local on_fixed_interval = (game.tick + stagger) % flush_interval == 0
 
     local write_profiler = nil
     if not is_backfill_tick and (on_fixed_interval or #storage.replay_buffer >= Config.max_buffered_events()) then

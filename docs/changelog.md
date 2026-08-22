@@ -17,7 +17,7 @@ enough to publish to the Factorio mod portal and forums.
 The foundation: track what's moving (characters, vehicles, biters),
 what's changing hands (inventories, fluids), and what's happening to
 whom (attacks, effects), cropped to wherever combat is actually
-happening. Establishes the [JSON schema](docs/schema.md) downstream
+happening. Establishes the [JSON schema](schema.md) downstream
 tools can start building against.
 
 <details>
@@ -65,60 +65,72 @@ tools can start building against.
 
 </details>
 
-<details>
-<summary><strong>0.1.1</strong> — planned</summary>
+<details open>
+<summary><strong>0.1.1</strong> — in progress</summary>
 
-Projected housekeeping pass - consistency cleanup and paying down a
-couple of documented workarounds, no new tracked data. Not yet released;
-listed here ahead of time so it doesn't get lost.
+Consistency cleanup and closing the schema-accuracy gaps found while
+writing `docs/schema.md`. No new tracked data. Not yet released; kept
+open by default here since it isn't done yet.
 
-**Housekeeping**
-- Standardize chunk/network composite-key building into one shared
-  helper instead of `combat_zones.lua`, `logistics.lua`, and others each
-  formatting their own `<surface>_<x>_<y>`-style keys inline.
-- Centralize the `vehicle_`/`container_`/`robot_`/`inserter_` owner-key
-  prefixing (currently repeated independently in `tracker.lua`,
-  `item_chains.lua`, and `logistics.lua`) alongside the inventory-diffing
-  helpers in `tracker_events.lua` that actually consume those keys.
-- Standardize `pcall` result-variable naming - `tracker_events.lua`,
-  `item_chains.lua`, and `fluid_chains.lua` each use a different
-  ok/value naming order for the same guard pattern.
-- Move the remaining hardcoded tuning constants (`NEST_CLUSTER_RADIUS`,
-  and `battlefield_marker.lua`'s recompute interval/TTL/line styling)
-  behind `Config`, matching how every other tunable in the mod is
-  exposed.
-- Route the backfill/flush tick-alternation and the flush/distant-sample
-  offset in `control.lua`'s `on_tick` through `Config` instead of the
-  inline magic numbers they use today.
-- Standardize `storage.*` nil-guarding - `tracker_events.lua`'s diff
-  helpers each defensively re-initialize their own storage table before
-  use, while most of `combat_zones.lua`/`tracker.lua` assume
-  `Init.ensure_storage` already ran.
-- Share one helper between `item_chains.lua`'s `inserter_targets()` and
-  `servicing_inserters()` - both independently implement the same pcall
-  + `find_entities_filtered` fallback pattern.
-- Make `data.lua` log a mismatch the same way `data-updates.lua` already
-  does, instead of silently returning on the same "not a table" case.
-- Trim `config.lua`'s tuning-history comments (`chunk_backfill_per_tick`,
-  `max_buffered_events`) down to a one-line pointer - they currently
-  narrate several rounds of "lowered from X to Y" that belong in git
-  history, not a getter's docstring.
-- Switch `verify_checklist.py`'s import of `inspect_replay.py` from a
-  manual `sys.path` insert to a normal package-relative import.
-- Remove `inspect_logs.py`'s unreachable `None` fallback entry in
-  `DURATION_UNIT_TO_MS` - the regex group it guards against is never
-  actually optional.
+**Changed**
+- Centralized composite-key building (`script/keys.lua`) and owner-key
+  construction (`vehicle_`/`container_`/`robot_`/`inserter_`/
+  `ground_item_` prefixes) into two shared helpers, replacing hand-rolled
+  concatenation that used to live independently in `combat_zones.lua`,
+  `logistics.lua`, `tracker.lua`, and `item_chains.lua`.
+- Standardized `pcall` result-variable naming across `tracker_events.lua`/
+  `item_chains.lua`, and deduplicated `item_chains.lua`'s belt/inserter
+  fallback search into one shared helper.
+- Promoted nest cluster radius to a real user-facing setting (it directly
+  shapes recorded data, like combat radius does); moved the battlefield
+  marker's purely-cosmetic constants (redraw cadence, TTL, line styling)
+  behind `Config` instead of leaving them hardcoded.
+- Routed `control.lua`'s backfill/flush tick-alternation and flush
+  stagger fraction through named `Config` getters instead of inline
+  magic numbers; trimmed `config.lua`'s multi-round tuning-history
+  comments down to a pointer at git history.
+- `docs/schema.md` now documents fields it was missing (`chunk_snapshot`/
+  `item_distribution`'s `chunk`/`surface` wrapper, `player_respawn`'s
+  `force`, `damage_event`'s `target_type`/`position`) and names the
+  literal JSON keys for its list-shaped fields instead of describing them
+  in prose.
+- Root-caused (not just muted) the `fluid_chains.lua` "index out of
+  range" mismatch: `LuaEntity::fluids_count`'s own docs confirm it also
+  counts non-fluidbox storages (a fluid turret's internal ammo buffer,
+  a fluid wagon's contents) that `entity.fluidbox` has no slot for -
+  every fluidbox-bounded loop now uses `#entity.fluidbox` (its own
+  confirmed length operator) instead, so the mismatch can't occur in the
+  first place. The entity-name-based mute/suppress logic this used to
+  need is gone.
+- `fluid_chains.lua` now walks the exact pipe network instead of guessing:
+  `LuaFluidBox::get_pipe_connections` (confirmed) returns each
+  connection's target box *and* its exact index within its own owner, so
+  a multi-fluidbox entity's independent sides (e.g. a pump's two ends)
+  no longer get merged into one reported segment the way the previous
+  guess-every-index version could.
+- `combat_zones.lua`'s `is_player_nearby`/`trigger_combat_at` are local
+  functions now instead of public `CombatZones.*` members - neither was
+  ever called from outside this file.
+- Added locale text for the 10 mod settings that had none (they were
+  showing up as raw internal names like `rrec-chain-near-hops` in
+  Factorio's settings menu instead of a readable name/description).
+- Removed a stale "goal reset" comment left over from the removed
+  scoring framing.
 
-**Known workarounds to revisit**
-- `fluid_chains.lua` can't recover which exact fluidbox index a
-  connection belongs to, so a discovered neighbor has its *entire* index
-  range enqueued rather than just the connected one - a real precision
-  loss for any entity with independent multi-fluidbox sides (e.g. a
-  pump), pending a confirmed reverse-index lookup.
-- `fluid_chains.lua` also mutes (rather than resolves) a real engine
-  inconsistency where `entity.fluids_count` over-reports valid indices
-  for some entity types - logged once per entity name, then silently
-  skipped from there on.
+**Removed**
+- Dead "permanent zone" cleanup code (`CombatZones.expire_permanent_zones`
+  and its `zone.permanent` checks): no released version of this mod has
+  ever set that flag - full recording mode's chunk activation was
+  already changed, before 0.1.0 shipped, to never add a
+  `storage.active_zones` entry at all, so the flag it existed to migrate
+  away from was already unreachable in the first public release.
+- `score_update` - keeping a running per-force death tally isn't this
+  recorder's job. `death_event` already names the victim's force and,
+  when known, the killer's, which is the attribution a downstream tool
+  actually needs; `tools/inspect_replay.py`'s scoreboard summary is now
+  computed straight from `death_event` instead of a dedicated event.
+
+**Planned (not yet implemented)**
 - `inspect_replay.py`'s battlefield-cluster lookup keys on chunk
   coordinates alone, dropping the surface - activity on two surfaces
   that happen to share chunk coordinates can be misattributed to the
@@ -143,33 +155,6 @@ can keep moving without friction:
 - Turning the testing checklist into a reusable "ideal replay" fixture -
   a known-good recording exercising every event type, kept around for
   testing going forward instead of re-generated by hand each time.
-
-### Discrepancies between `docs/schema.md` and the current code
-
-Found while auditing the schema doc against the real event payloads for
-this PR. None of these are wrong claims - they're gaps where the schema
-describes a subset of what an event actually carries. Worth closing
-before downstream consumers start relying on the doc as-is:
-
-- `chunk_snapshot`'s top-level `chunk` (`[chunk_x, chunk_y]`) and
-  `surface` (surface name) fields aren't documented - only `tiles`,
-  `statics`, and `logistics` are.
-- `item_distribution` is documented as just its `entries` array; the
-  same top-level `chunk`/`surface` wrapper fields `chunk_snapshot` has
-  aren't mentioned.
-- `score_update`'s actual payload also carries `entity`, `entity_type`,
-  and `position` for what died - the schema only mentions force, killer,
-  and the running death count.
-- `player_respawn` also carries `force`, not just player index and
-  position.
-- `damage_event` also carries `target_type` and `position` - the schema
-  only mentions target, damage, `dealer`, and `dealt_by`.
-- More generally, the schema describes several events' list-shaped
-  fields (`inventory_delta`/`fluid_delta`'s changes, `belt_contents`'
-  per-belt entries, `mobile_positions`' per-entity fields) in prose
-  rather than by their literal JSON key names - worth making the whole
-  doc field-exact rather than descriptive, since it's meant to be a
-  strict contract.
 
 ### Open design questions
 
@@ -207,6 +192,25 @@ Flagged for discussion, not decided:
   fluids, which share their levels proportionally across a segment
   rather than moving in discrete units. Worth reconsidering alongside
   the chain-walk approach, not a replacement for it yet.
+- **Discovering which inserters service a distant chest.** Chests have
+  no "what's connected to me" query, so `servicing_inserters` searches a
+  configurable tile radius around a chest and filters candidates by
+  their exact (confirmed) `pickup_target`/`drop_target`. That radius is
+  the only heuristic part - and it's a harder tradeoff than it looks:
+  a persistent reverse index built as inserters are discovered elsewhere
+  (chunk snapshots, physical zone scans, chain walks) sounds like the
+  "real" fix, but a chest reached via distant chain-walking is
+  specifically one nothing else has touched yet, so its servicing
+  inserter would often be missing from that index too - a live spatial
+  query at the moment of need may genuinely be the right tool here. A
+  full, unbounded per-lookup search isn't free either given how much
+  effort already went into keeping full-recording-mode scans bounded
+  elsewhere in this mod. One option that doesn't need new information:
+  bound the search by the chest's containing chunk (already a meaningful
+  unit everywhere else in this mod) instead of an arbitrary tile count -
+  larger and more consistent than the current radius, but still a bound,
+  not a real fix. Not implemented pending a decision on which tradeoff
+  to take.
 
 ## v0.3 — Full Vanilla Coverage
 

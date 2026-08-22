@@ -2,7 +2,7 @@
 
 This is the contract downstream tools (visualizers, converters, analyzers)
 should code against. It covers the 0.1 release. Expect additions in later
-0.x releases (see [`changelog.md`](../changelog.md)), but the shape
+0.x releases (see [`changelog.md`](changelog.md)), but the shape
 described here - the envelope, and the fields already documented for each
 event `type` - is not expected to change out from under existing
 consumers within the 0.x line.
@@ -60,17 +60,16 @@ chunk, not paired with an "unsnapshot" event, since what it describes
 
 | `type` | Fired when | `data` contains |
 |---|---|---|
-| `chunk_snapshot` | A chunk records for the first time | `tiles`, `statics` (every building/turret/wall/nest, tagged `is_defense` for turrets/walls/gates and grouped into nest `cluster`s), and `logistics` - a one-time *roster* (no contents, not capped) of every storage/provider/requester container reachable by a logistics network touching this chunk, plus that network's robot counts *at capture time* (`robots_at_capture`). Contents aren't here - they arrive later via ongoing `inventory_delta` events. |
-| `mobile_positions` | Every tick a zone is active | Position/orientation of every unit, character, vehicle, wagon, and bot in the zone, tagged with `group_id` if part of a unit group and `spawner_id` for a biter/spitter's originating nest |
-| `death_event` | Any tracked entity dies | Victim (with `hostile_kind`/`hostile_size` for biters/spitters/worms/spawners), killer if any, and `loot` (items dropped) when non-empty |
-| `score_update` | A player or a manned/piloted vehicle dies | Force, killer, and that force's running death count |
-| `player_respawn` | A player respawns after dying | Player index and new position |
-| `damage_event` | A turret, wall, gate, character, vehicle, locomotive, or artillery wagon takes damage | Target, damage amount, `dealer` (who's responsible) and `dealt_by` (the specific projectile/flame/beam that hit) |
-| `projectile_impact` | A tracked projectile/stream hits something | Weapon name, source, target position/entity |
-| `inventory_delta` | Any tracked owner's item contents change | `owner` (a stable key, e.g. `player_3`, `vehicle_118`, `container_204`), `owner_kind` (`player`/`vehicle`/`container`/`corpse`/`robot`/`inserter_hand`/`ground_item`), a list of `{item, delta}` changes, and `position` for owners (like corpses and ground items) that aren't otherwise position-tracked elsewhere |
-| `fluid_delta` | A tracked fluid segment's contents change | `owner` (`fluid_<entity>_<fluidname>`), a list of `{fluid, delta}` changes, and the representative entity's `position` |
-| `belt_contents` | A belt's contents change while in an active zone or reached by a chain walk | Per-line item counts, only for lines that changed |
-| `item_distribution` | The far end of a belt/inserter chain has any tracked contents | Per (item, rough direction from the zone) entries: `approx_count`, a `centroid` position, and how many entities that estimate is built from |
+| `chunk_snapshot` | A chunk records for the first time | `chunk` (`[chunk_x, chunk_y]`), `surface` (surface name), `tiles`, `statics` (every building/turret/wall/nest, tagged `is_defense` for turrets/walls/gates and grouped into nest `cluster`s), and `logistics` - a one-time *roster* (no contents, not capped) of every storage/provider/requester container reachable by a logistics network touching this chunk, plus that network's robot counts *at capture time* (`robots_at_capture`). Contents aren't here - they arrive later via ongoing `inventory_delta` events. |
+| `mobile_positions` | Every tick a zone is active | An array of per-entity records: `id`, `name`, `type`, `force`, `position`, `orientation`, `group_id` if part of a unit group, and `spawner_id` for a biter/spitter's originating nest |
+| `death_event` | Any tracked entity dies | `victim` (`name`, `type`, `force`, `position`, plus `hostile_kind`/`hostile_size` for biters/spitters/worms/spawners), `killer` if any, and `loot` (items dropped) when non-empty |
+| `player_respawn` | A player respawns after dying | `player_index`, `force`, and new `position` |
+| `damage_event` | A turret, wall, gate, character, vehicle, locomotive, or artillery wagon takes damage | `target` (name) and `target_type`, `position`, `damage` amount, `dealer` (who's responsible) and `dealt_by` (the specific projectile/flame/beam that hit) |
+| `projectile_impact` | A tracked projectile/stream hits something | `weapon` name, `source` (name + position) if known, `target_position`, and `target` (name) if known |
+| `inventory_delta` | Any tracked owner's item contents change | `owner` (a stable key, e.g. `player_3`, `vehicle_118`, `container_204`), `owner_kind` (`player`/`vehicle`/`container`/`corpse`/`robot`/`inserter_hand`/`ground_item`), `changes` - a list of `{item, delta}` - and `position` for owners (like corpses and ground items) that aren't otherwise position-tracked elsewhere |
+| `fluid_delta` | A tracked fluid segment's contents change | `owner` (`fluid_<entity>_<fluidname>`), `changes` - a list of `{fluid, delta}` - and the representative entity's `position` |
+| `belt_contents` | A belt's contents change while in an active zone or reached by a chain walk | An array of per-belt records: `id`, `name`, `position`, and `lines` - a list of `{line, contents}` for only the lines that changed |
+| `item_distribution` | The far end of a belt/inserter chain has any tracked contents | `chunk` (`[chunk_x, chunk_y]`), `surface`, and `entries` - a list of per (item, rough direction from the zone) records: `item`, `direction`, `approx_count`, a `centroid` position, and `entities_sampled` (how many entities that estimate is built from) |
 
 Per-tick performance timings are never written here - they go to
 Factorio's own log file instead. See the README's

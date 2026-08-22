@@ -63,7 +63,6 @@ DURATION_UNIT_TO_MS = {
     "μs": 1e-3,
     "ms": 1.0,
     "s": 1000.0,
-    None: 1.0,
 }
 
 

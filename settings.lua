@@ -114,5 +114,14 @@ data:extend({
         minimum_value = 1,
         maximum_value = 1000,
         order = "m"
+    },
+    {
+        type = "int-setting",
+        name = "rrec-nest-cluster-radius",
+        setting_type = "runtime-global",
+        default_value = 20,
+        minimum_value = 1,
+        maximum_value = 200,
+        order = "n"
     }
 })

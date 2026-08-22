@@ -14,7 +14,7 @@ That data is designed to be ingested by standalone desktop visualizers, so you c
 ## Features
 
 * **Smart Spatial Cropping:** Recording only turns on for a chunk once a player (on foot, driving, or piloting a vehicle) is actually within range of a fight there. Idle bases and biters that never see a player are never recorded.
-* **Sports-Style Scoring:** Player and vehicle deaths are logged as `score_update` events, with a running per-force death count - think of it as the "goal" in a sports replay. `player_respawn` marks the moment play resumes.
+* **Force-Attributed Deaths:** Player and vehicle deaths are always logged as `death_event`s naming the victim's force and, when known, the killer's - `player_respawn` marks the moment play resumes.
 * **Environmental Context:** The first time a chunk becomes relevant, its tiles (water, landfill, concrete, ...) and every building on it (walls, every turret type, nests, and anything else standing there) are dumped once, so a viewer can render the battlefield without re-recording it on every subsequent skirmish.
 * **Event-Driven Tracking:** Projectile/stream impacts, fire and acid patches appearing and expiring, inventory changes, and belt contents are all recorded as diffs or one-shot events rather than by polling everything every tick.
 * **AI Grouping:** Nests captured in a snapshot are clustered into rough "bases" by proximity; biters/spitters report the `unit_group` they belong to and, individually, the specific spawner they hatched from, so a viewer can render an attack/expansion party or a nest's offspring as one object.
@@ -61,6 +61,7 @@ All settings live under *Settings > Mod Settings > Map* and can be changed witho
 | Chain near hops | 5 | Belt/inserter chain hops within this distance of a zone get exact per-entity tracking; beyond it, they're rolled up into a compact summary instead. |
 | Chain max hops | 30 | Absolute limit on how far a belt/inserter chain walk follows outward from a zone, near or far. |
 | Inserter search radius | 3 tiles | How far to search around a chest for inserters that service it. The radius only narrows the search - matches are confirmed via each candidate's exact `pickup_target`/`drop_target`, so a too-large radius costs a little performance, not correctness. |
+| Nest cluster radius | 20 tiles | How close two captured nests need to be to get grouped into the same rough "base" (the `cluster` field on a chunk snapshot's spawner statics). Smaller values split nests into more, smaller clusters; larger values merge more of them together. |
 | Chunk backfill per tick | 2 chunks | When full recording mode turns on with already-generated chunks in the save, how many of them get scanned and captured per tick while catching up. See [Full recording mode performance](#full-recording-mode-performance) below. |
 | Flush interval | 1 second | How often the buffered event queue gets serialized and written to `replay.json`, at most - see "Max buffered events" below for the other trigger. |
 | Max buffered events | 2 events | Caps how many buffered events a single flush serializes+writes, and triggers an early flush once the buffer grows past this size. See [Full recording mode performance](#full-recording-mode-performance) below. |
@@ -187,8 +188,8 @@ isn't something a headless CI job can easily stand in for. Instead:
   ```
 * [`tools/inspect_replay.py`](tools/inspect_replay.py) is a general-purpose
   summary for anything not tied to the checklist - event counts, tick
-  range, battlefield count/duration/bounding box, scoreboard, kills by
-  kind/size, and a sample payload per event type:
+  range, battlefield count/duration/bounding box, deaths by force, kills
+  by kind/size, and a sample payload per event type:
   ```
   python3 tools/inspect_replay.py
   ```

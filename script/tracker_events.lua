@@ -9,8 +9,24 @@
 -- ItemChains, FluidChains) shares one implementation instead of five
 -- slightly-different copies.
 local Exporter = require("script.exporter")
+local Keys = require("script.keys")
 
 local TrackerEvents = {}
+
+-- Shared owner-key constructors for the "<prefix>_<unit_number>" keys used
+-- across tracker.lua/item_chains.lua/logistics.lua to identify a vehicle/
+-- container/robot/inserter as an inventory_delta owner - centralized here
+-- (alongside the diffing helpers that actually consume these keys) instead
+-- of each call site concatenating its own copy of the same prefix.
+local function make_owner_key(prefix)
+    return function(unit_number) return Keys.join(prefix, unit_number) end
+end
+
+TrackerEvents.vehicle_owner_key = make_owner_key("vehicle")
+TrackerEvents.container_owner_key = make_owner_key("container")
+TrackerEvents.robot_owner_key = make_owner_key("robot")
+TrackerEvents.inserter_owner_key = make_owner_key("inserter")
+TrackerEvents.ground_item_owner_key = make_owner_key("ground_item")
 
 -- Factorio 2.0's quality system changed what LuaInventory.get_contents()
 -- (and LuaTransportLine.get_contents()) returns: instead of a simple
@@ -39,7 +55,6 @@ end
 -- used for things like a corpse's position, which has nowhere else to be
 -- reported (see Tracker's corpse tracking).
 function TrackerEvents.log_inventory_delta(owner_key, owner_kind, current_contents, extra_fields)
-    storage.inventory_cache = storage.inventory_cache or {}
     local previous = storage.inventory_cache[owner_key] or {}
     local deltas = {}
 
@@ -79,7 +94,6 @@ end
 -- fluid/item names could in principle collide, so the two streams are
 -- deliberately never merged into one. See script/fluid_chains.lua.
 function TrackerEvents.log_fluid_delta(owner_key, current_fluids, extra_fields)
-    storage.fluid_cache = storage.fluid_cache or {}
     local previous = storage.fluid_cache[owner_key] or {}
     local deltas = {}
 
@@ -119,21 +133,21 @@ end
 function TrackerEvents.container_contents(entity)
     local contents = {}
 
-    local ok_chest, chest = pcall(function() return entity.get_inventory(defines.inventory.chest) end)
-    if ok_chest and chest then
+    local chest_ok, chest = pcall(function() return entity.get_inventory(defines.inventory.chest) end)
+    if chest_ok and chest then
         for name, count in pairs(TrackerEvents.flatten_contents(chest.get_contents())) do
             contents[name] = (contents[name] or 0) + count
         end
-    elseif not ok_chest then
+    elseif not chest_ok then
         log("[replay-recorder] TrackerEvents: " .. entity.name .. ".get_inventory(chest) failed: " .. tostring(chest))
     end
 
-    local ok_trash, trash = pcall(function() return entity.get_inventory(defines.inventory.logistic_container_trash) end)
-    if ok_trash and trash then
+    local trash_ok, trash = pcall(function() return entity.get_inventory(defines.inventory.logistic_container_trash) end)
+    if trash_ok and trash then
         for name, count in pairs(TrackerEvents.flatten_contents(trash.get_contents())) do
             contents[name] = (contents[name] or 0) + count
         end
-    elseif not ok_trash then
+    elseif not trash_ok then
         log("[replay-recorder] TrackerEvents: " .. entity.name .. ".get_inventory(logistic_container_trash) failed: " .. tostring(trash))
     end
 
@@ -202,7 +216,7 @@ function TrackerEvents.ground_item_key(entity)
         return nil
     end
     storage.registered_ground_items[registration_number] = true
-    return "ground_item_" .. registration_number
+    return TrackerEvents.ground_item_owner_key(registration_number)
 end
 
 -- Fires for ANY object this mod (or any other mod) has registered via
@@ -221,7 +235,7 @@ function TrackerEvents.on_object_destroyed(event)
 
     if storage.registered_ground_items[event.registration_number] then
         storage.registered_ground_items[event.registration_number] = nil
-        local owner_key = "ground_item_" .. event.registration_number
+        local owner_key = TrackerEvents.ground_item_owner_key(event.registration_number)
         storage.inventory_cache[owner_key] = nil
         Exporter.log_event(game.tick, "ground_item_removed", {owner = owner_key})
         return
@@ -262,14 +276,13 @@ end
 -- write through the same cache and don't fight each other over the same
 -- belt.
 function TrackerEvents.log_belt_contents(entities)
-    storage.belt_line_cache = storage.belt_line_cache or {}
     local belt_data = {}
 
     for _, ent in ipairs(entities) do
         if ent.valid then
             local lines = {}
             for i = 1, ent.get_max_transport_line_index() do
-                local cache_key = ent.unit_number .. "_" .. i
+                local cache_key = Keys.join(ent.unit_number, i)
                 local contents = TrackerEvents.flatten_contents(ent.get_transport_line(i).get_contents())
                 if not belt_line_contents_equal(storage.belt_line_cache[cache_key], contents) then
                     table.insert(lines, {line = i, contents = contents})

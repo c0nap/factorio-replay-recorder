@@ -19,8 +19,10 @@ import collections
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from inspect_replay import default_replay_path, load_events  # noqa: E402
+# No sys.path manipulation needed: running this script directly (as
+# documented above) already puts its own directory - tools/ - at the
+# front of sys.path, which is where inspect_replay.py lives too.
+from inspect_replay import default_replay_path, load_events
 
 
 def _count(events, etype):
@@ -243,7 +245,6 @@ CHECKS = [
     ("mobile_positions recorded", "1-2", present("mobile_positions")),
     ("death_event recorded", "12", present("death_event")),
     ("kill classification covers biter/spitter/worm/spawner", "14", check_kill_classification),
-    ("score_update recorded", "18", present("score_update")),
     ("player_respawn recorded", "18", present("player_respawn")),
     ("damage_event recorded", "12", present("damage_event")),
     ("damage_event includes turret-dealt damage", "12", check_turret_damage),

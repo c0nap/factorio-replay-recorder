@@ -18,13 +18,10 @@
 -- there's no visible gap between one border expiring and the next
 -- appearing.
 local Config = require("script.config")
+local Keys = require("script.keys")
 
 local BattlefieldMarker = {}
 
-local RECOMPUTE_INTERVAL_TICKS = 60
-local TIME_TO_LIVE_TICKS = 90
-local LINE_COLOR = {r = 0.2, g = 1, b = 1, a = 1}
-local LINE_WIDTH = 3
 local CHUNK_SIZE = 32
 
 -- One entry per chunk-adjacent direction: the neighbouring chunk offset
@@ -49,7 +46,7 @@ local function group_by_surface()
             group = {surface = zone.surface, chunks = {}}
             by_surface[zone.surface.index] = group
         end
-        group.chunks[zone.chunk_x .. "_" .. zone.chunk_y] = true
+        group.chunks[Keys.join(zone.chunk_x, zone.chunk_y)] = true
     end
     return by_surface
 end
@@ -61,15 +58,15 @@ local function draw_perimeter(group)
         local base_x, base_y = cx * CHUNK_SIZE, cy * CHUNK_SIZE
 
         for _, edge in ipairs(EDGES) do
-            local neighbour_key = (cx + edge.dx) .. "_" .. (cy + edge.dy)
+            local neighbour_key = Keys.join(cx + edge.dx, cy + edge.dy)
             if not group.chunks[neighbour_key] then
                 rendering.draw_line{
-                    color = LINE_COLOR,
-                    width = LINE_WIDTH,
+                    color = Config.battlefield_marker_line_color(),
+                    width = Config.battlefield_marker_line_width(),
                     from = {base_x + edge.from[1], base_y + edge.from[2]},
                     to = {base_x + edge.to[1], base_y + edge.to[2]},
                     surface = group.surface,
-                    time_to_live = TIME_TO_LIVE_TICKS,
+                    time_to_live = Config.battlefield_marker_time_to_live_ticks(),
                     draw_on_ground = true,
                 }
             end
@@ -84,7 +81,7 @@ end
 function BattlefieldMarker.tick()
     if not Config.battlefield_marker_enabled() then return end
     if Config.full_recording_mode() then return end
-    if game.tick % RECOMPUTE_INTERVAL_TICKS ~= 0 then return end
+    if game.tick % Config.battlefield_marker_recompute_interval_ticks() ~= 0 then return end
 
     for _, group in pairs(group_by_surface()) do
         draw_perimeter(group)

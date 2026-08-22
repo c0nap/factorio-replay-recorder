@@ -301,7 +301,7 @@ def summarize(events, malformed, sample_limit, only_type):
 
     _print_battlefields(events)
     _summarize_owner_kinds(events)
-    _summarize_scores(events)
+    _summarize_deaths_by_force(events)
     _summarize_kills(events)
     _summarize_combat_diversity(events)
 
@@ -330,18 +330,17 @@ def _summarize_owner_kinds(events):
             print(f"  {kind:<15} {count}")
 
 
-def _summarize_scores(events):
-    latest_by_force = {}
+def _summarize_deaths_by_force(events):
+    deaths = collections.Counter()
     for e in events:
-        if e.get("type") == "score_update":
-            data = e.get("data", {})
-            force = data.get("force")
+        if e.get("type") == "death_event":
+            force = e.get("data", {}).get("victim", {}).get("force")
             if force is not None:
-                latest_by_force[force] = data.get("deaths_this_force")
-    if latest_by_force:
-        print("\nScoreboard (latest deaths_this_force per force):")
-        for force, deaths in latest_by_force.items():
-            print(f"  {force}: {deaths}")
+                deaths[force] += 1
+    if deaths:
+        print("\nDeaths by force (from death_event victims):")
+        for force, count in deaths.most_common():
+            print(f"  {force}: {count}")
 
 
 def _summarize_kills(events):
