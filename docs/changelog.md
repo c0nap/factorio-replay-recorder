@@ -270,3 +270,19 @@ recorded on and most replays anyone has aren't on the latest version.
 Likely means maintaining more than one branch, with the release page
 offering builds for each supported target version. This is the hard
 problem the rest of the roadmap is building up to.
+
+<!--
+- Structure: an eventual major version gets a top-level header, with each mid version
+  (v0.1, v0.2, ...) as a header under it. Once a mid version has shipped, each point
+  release (0.1.0, 0.1.1, ...) gets its own collapsed-by-default expandable section
+  under it. An unreleased mid version just needs its header and a short description —
+  no expandable until something ships. All major versions should have a brief preface
+  describing their overall goal.
+- Goals and user-facing changes only, never a commit list. Propose mechanisms,
+  refactors, and design changes, not how to implement them.
+- Bug fixes belong here when they're user-facing. Internal corrections — a clarified
+  preference, a fixed misconception, a comment, a changed function signature — don't.
+- Keep it short. Implementation detail is for whoever does the work, not this
+  document.
+-->
+
