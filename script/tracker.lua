@@ -278,7 +278,7 @@ function Tracker.on_trigger_created_entity(event)
     if not entity or not entity.valid then return end
 
     -- Both the flamethrower's flame patch and a spitter/worm's acid splash
-    -- are entity.type == "fire" on real 2.0.76 data.
+    -- are entity.type == "fire" on real 2.0.77 data.
     if entity.type ~= "fire" then return end
 
     local in_zone = CombatZones.notify_and_check(entity.surface, entity.position)

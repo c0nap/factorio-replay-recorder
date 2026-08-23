@@ -23,6 +23,8 @@ tools can start building against.
 <details>
 <summary><strong>0.1.0</strong> — 2026-08-21</summary>
 
+*MVP*
+
 **Added**
 - Recording turns on for a chunk only once a player (on foot, driving,
   piloting a vehicle, or an unmanned autopilot spidertron) is actually
@@ -59,24 +61,29 @@ tools can start building against.
 </details>
 
 <details>
-<summary><strong>0.1.1</strong> — 2026-08-22</summary>
+<summary><strong>0.1.1</strong> — 2026-08-23</summary>
 
-A consistency and accuracy pass - no new tracked data, but a few real
-fixes to what's already tracked.
+*Housekeeping*
+
+Consistency and accuracy - no new tracked data.
+
+**Changed**
+- Now targets Factorio 2.0.77 (was 2.0.76). A small patch, and the last
+  2.0.x release before 2.1 development began, so it rounds out the
+  version this mod is built against.
 
 **Fixed**
-- Fluid tracking near flamethrower turrets and other buildings with more
-  than one internal fluid connection (like pumps) is now fully accurate.
-  Previously, a mismatch in how the game reports fluid storage counts
-  could suppress fluid data around a flamethrower turret, and a pump's
-  two independent sides could get merged together into a single
-  reported fluid reading instead of staying separate.
+- Fluid tracking near flamethrower turrets and other multi-connection
+  buildings (like pumps) is now accurate. It previously could suppress
+  fluid data around a flamethrower turret, and could merge a pump's two
+  independent sides into a single reading instead of keeping them
+  separate.
 - Every mod setting now shows a proper name and description in
   Factorio's settings menu - several previously showed only their raw
   internal ID (e.g. `rrec-chain-near-hops`).
-- `docs/schema.md` now lists every field several event types actually
-  contain - it previously undersold `chunk_snapshot`, `item_distribution`,
-  `player_respawn`, and `damage_event`.
+- The schema reference now lists every field several event types
+  actually contain - `chunk_snapshot`, `item_distribution`,
+  `player_respawn`, and `damage_event` were all missing some.
 
 **Added**
 - A "Nest cluster radius" setting, so how nearby nests get grouped into
@@ -84,46 +91,41 @@ fixes to what's already tracked.
   detection radius already was.
 
 **Removed**
-- The `score_update` event. Keeping a running per-force death count
-  isn't this recorder's job - `death_event` already names the victim's
-  force and, when known, the killer's, so that attribution is still
-  fully available, just without a separate running tally. Downstream
-  tooling reading `score_update` will need updating; the included
-  `tools/inspect_replay.py` already computes the same "deaths by force"
-  summary directly from `death_event` instead.
-  - The testing checklist's automated check for `score_update` was
-    removed along with the event - a checklist run against 0.1.1
-    correctly reports 29/29 passing instead of 30/30. That's expected,
-    not a regression.
+- The `score_update` event. A running per-force death count isn't this
+  recorder's job - `death_event` already names the victim's force and,
+  when known, the killer's, so that attribution is still available. If
+  you use `score_update` downstream, switch to reading force off
+  `death_event` instead - `tools/inspect_replay.py` already does.
+  - The testing checklist's check for `score_update` was removed with
+    it, so a checklist run against 0.1.1 correctly shows 29/29 passing
+    instead of 30/30. Expected, not a regression.
 
 **Internal / code changes**
 
-Everything below is implementation detail - not user-facing, listed
-here for anyone working on the mod itself:
+Implementation detail, not user-facing - kept here for anyone working
+on the mod itself:
 
-- Root-caused (rather than just muted) the fluid tracking mismatch
-  above: `LuaEntity::fluids_count` counts some non-fluidbox storages
-  (e.g. a fluid turret's internal ammo buffer) that `entity.fluidbox`
-  has no slot for; every fluidbox-bounded loop in `fluid_chains.lua` now
-  uses `#entity.fluidbox` (its own length operator) instead, and the
-  pipe-network walk uses `LuaFluidBox::get_pipe_connections` for an
-  exact connected index instead of guessing a neighbor's entire index
-  range.
+- `entity.fluids_count` counts some non-fluidbox storages (e.g. a
+  turret's internal ammo buffer) that `entity.fluidbox` has no slot for
+  - `fluid_chains.lua` now bounds every fluidbox loop with
+  `#entity.fluidbox` instead, and walks the pipe network via
+  `LuaFluidBox::get_pipe_connections` for the exact connected index
+  instead of guessing a neighbor's whole range.
 - Centralized composite-key building (`script/keys.lua`) and owner-key
-  construction (`TrackerEvents.*_owner_key`) into two shared helpers,
-  replacing hand-rolled string concatenation that used to live
-  independently in several files.
+  construction (`TrackerEvents.*_owner_key`) into shared helpers,
+  replacing hand-rolled string concatenation spread across several
+  files.
 - Standardized `pcall` result-variable naming, and deduplicated a
   repeated search pattern in `item_chains.lua`.
 - Routed remaining hardcoded tuning constants (backfill/flush timing,
   battlefield-marker styling) through `Config`; trimmed `config.lua`'s
-  multi-round tuning-history comments down to a pointer at git history.
-- Removed dead code: `CombatZones.expire_permanent_zones` (unreachable -
-  no released version of this mod has ever produced the state it existed
-  to clean up), and two functions that turned out to only ever be called
-  from within their own file are now local instead of public.
-- Assorted stale-comment cleanup (a leftover "goal reset" sports
-  metaphor from the removed scoring framing, among others).
+  tuning-history comments.
+- Removed dead code: `CombatZones.expire_permanent_zones` (no released
+  version of this mod ever produced the state it cleaned up), and two
+  functions only ever called within their own file are now local
+  instead of public.
+- Assorted stale-comment cleanup, including a leftover "goal reset"
+  sports metaphor from the removed scoring framing.
 
 </details>
 
@@ -204,7 +206,7 @@ Flagged for discussion, not decided:
 ## v0.3 — Full Vanilla Coverage
 
 Unreleased. The goal: record every prototype and data point vanilla
-Factorio 2.0.76 has to offer - no mod-compatibility work yet, just
+Factorio 2.0.77 has to offer - no mod-compatibility work yet, just
 closing what the 0.1 testing checklist flagged as gaps:
 
 - **Landmines** - not confirmed whether this mod tracks them at all
@@ -260,7 +262,7 @@ build on, without committing to multi-version support itself yet.
 ## v0.5 — Multi-Version Support
 
 Unreleased. The payoff for the hardening done in v0.2-v0.4: targeting
-multiple Factorio versions (e.g. 2.1, 2.0.76, 1.1, 0.16) via small
+multiple Factorio versions (e.g. 2.1, 2.0.77, 1.1, 0.16) via small
 per-version adapters, since a replay is tied to the exact version it was
 recorded on and most replays anyone has aren't on the latest version.
 Likely means maintaining more than one branch, with the release page

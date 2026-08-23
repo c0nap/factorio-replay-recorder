@@ -7,7 +7,7 @@
 -- and inserters.
 --
 -- Fluid methods live on `entity.fluidbox` (a LuaFluidBox wrapper), not on
--- LuaEntity directly, on real 2.0.76 data:
+-- LuaEntity directly, on real 2.0.77 data:
 --   entity.fluidbox[index]                       -> {name, amount, temperature} or nil
 --   #entity.fluidbox                             -> count of fluidbox-backed storages (CONFIRMED,
 --       LuaFluidBox's own `#` length operator - see fluidbox_count below)

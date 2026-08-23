@@ -29,17 +29,17 @@ That data is designed to be ingested by standalone desktop visualizers, so you c
 
 ## Installation
 
-1. Download a release zip from the [Releases](../../releases) page (or build one yourself - see [`docs/packaging.md`](docs/packaging.md)).
+1. Download a release zip from the [Releases](../../releases) page (or build one yourself - see [`packaging`](docs/packaging.md)).
 2. Extract it into your Factorio `mods` directory, so you end up with a `mods/replay-recorder_<version>/` folder containing `info.json`.
 3. Enable the mod from Factorio's in-game Mods menu.
 
-Not yet available on the Factorio mod portal - see [`changelog.md`](docs/changelog.md) for the roadmap to 1.0.
+Not yet available on the Factorio mod portal - see [`changelog`](docs/changelog.md) for the roadmap to 1.0.
 
 ## Usage
 
 There are three ways to produce a `replay.json` with this mod, ranging
 from "just play the game" to a not-yet-confirmed headless workflow meant
-for automated testing. See [`docs/usage.md`](docs/usage.md) for the full
+for automated testing. See [`usage`](docs/usage.md) for the full
 breakdown of each and when to use it:
 
 1. Recording live during normal gameplay (not recommended).
@@ -126,7 +126,7 @@ slowest N individual ticks per field (`--top-n`, default 10), and any
 explicitly).
 
 It defaults to the standard per-OS `factorio-current.log` location (see
-[`docs/testing-checklist.md`](docs/testing-checklist.md)'s setup step for
+[`testing-checklist`](docs/testing-checklist.md)'s setup step for
 the exact paths); pass `--path` if that's wrong for your setup, e.g. to
 point at `factorio-previous.log` for the session before the current one.
 
@@ -148,7 +148,7 @@ newline-delimited JSON (JSONL) - one `{"tick": ..., "type": ..., "data":
 stream (rather than one giant JSON document) is what lets a visualizer
 start rendering before a long recording has finished.
 
-See [`docs/schema.md`](docs/schema.md) for the full event-type
+See [`schema`](docs/schema.md) for the full event-type
 reference - the contract this mod's output follows, and the thing to
 build a downstream consumer against.
 
@@ -176,7 +176,7 @@ There's no automated test suite - the mod's behavior depends on a live
 player character interacting with a running Factorio simulation, which
 isn't something a headless CI job can easily stand in for. Instead:
 
-* [`docs/testing-checklist.md`](docs/testing-checklist.md) is a short,
+* [`testing-checklist`](docs/testing-checklist.md) is a short,
   heavily console-scripted list of scenarios to run through in a real
   (throwaway) save, covering every event type the mod can produce.
 * [`tools/verify_checklist.py`](tools/verify_checklist.py) checks the
@@ -204,12 +204,12 @@ None of these need dependencies beyond Python's standard library.
 
 ## Releasing
 
-See [`docs/packaging.md`](docs/packaging.md) for how to build a release
+See [`packaging`](docs/packaging.md) for how to build a release
 zip and cut a GitHub release.
 
 ## Changelog
 
-See [`changelog.md`](docs/changelog.md) for released changes and the roadmap
+See [`changelog`](docs/changelog.md) for released changes and the roadmap
 toward 1.0.
 
 ## License
@@ -221,9 +221,9 @@ Guidance for coding agents working on this repo (not rendered content for
 end users - kept here rather than deleted so it survives across sessions):
 
 FACTS TO STOP RE-DISCOVERING:
-- This mod targets Factorio 2.0.76 specifically, not 2.1 ("latest") - 2.1
+- This mod targets Factorio 2.0.77 specifically, not 2.1 ("latest") - 2.1
   changed parts of this API. Every lua-api.factorio.com link MUST read
-  https://lua-api.factorio.com/2.0.76/... - never .../latest/...
+  https://lua-api.factorio.com/2.0.77/... - never .../latest/...
 - You (the agent) are unable to fetch lua-api.factorio.com yourself - outbound
   access to it is blocked in this environment. You cannot verify a class
   property, event field, or prototype type against the real docs on your
