@@ -43,7 +43,7 @@ just enemies.
 Type this command twice - Factorio has a misfire guard for the first console
 command of a session.
 ```
-/c game.player.force.research_all_technologies(); settings.global["rrec-combat-radius"] = {value = 100}; settings.global["rrec-distant-sample-interval-seconds"] = {value = 1}; settings.global["rrec-chain-near-hops"] = {value = 1}; settings.global["rrec-chain-max-hops"] = {value = 50}; settings.global["rrec-chunk-backfill-per-tick"] = {value = 2}; settings.global["rrec-max-buffered-events"] = {value = 2}; settings.global["rrec-diagnostics-enabled"] = {value = true}; settings.global["rrec-battlefield-marker-enabled"] = {value = true}
+/c game.player.force.research_all_technologies(); game.speed=3; settings.global["rrec-combat-radius"] = {value = 100}; settings.global["rrec-distant-sample-interval-seconds"] = {value = 1}; settings.global["rrec-chain-near-hops"] = {value = 1}; settings.global["rrec-chain-max-hops"] = {value = 50}; settings.global["rrec-chunk-backfill-per-tick"] = {value = 2}; settings.global["rrec-max-buffered-events"] = {value = 2}; settings.global["rrec-diagnostics-enabled"] = {value = true}; settings.global["rrec-battlefield-marker-enabled"] = {value = true}
 ```
 Turns on diagnostics and the battlefield marker (cyan outline around
 active zones). Also widens the combat radius to 100 tiles - steps 4-7
@@ -354,7 +354,7 @@ player-controlled. Fully scripted, no action required.
 ```
 Wait ~5 seconds.
 
-**Cleanup:** clear the spidertron and target:
+**Cleanup:** clear the spidertron:
 ```
 /c for _, e in ipairs(game.player.surface.find_entities_filtered{type = "spider-vehicle", force = "player"}) do e.destroy() end; for _, e in ipairs(game.player.surface.find_entities_filtered{force = "enemy"}) do e.destroy() end
 ```
@@ -368,6 +368,11 @@ first), and removal (`corpse_expired`).
 ```
 /c game.player.insert{name="iron-plate", count=20}; game.player.insert{name="firearm-magazine", count=10}; game.player.character.health = 5; game.player.surface.create_entity{name="small-biter", position={game.player.position.x + 1, game.player.position.y}, force="enemy"}
 ```
+**Cleanup:** clear the biter:
+```
+/c for _, e in ipairs(game.player.surface.find_entities_filtered{force = "enemy"}) do e.destroy() end
+```
+
 **Action:** Let the biter kill you, then click Respawn. Wait ~2 seconds.
 ```
 /c local c = game.player.surface.find_entities_filtered{type = "character-corpse"}[1]; if c then c.get_inventory(defines.inventory.character_corpse).remove{name = "iron-plate", count = 5} end
@@ -376,11 +381,6 @@ Wait a moment - just long enough for the partial removal to get scanned
 as its own `inventory_delta` before the next command clears the rest.
 ```
 /c local c = game.player.surface.find_entities_filtered{type = "character-corpse"}[1]; if c then c.get_inventory(defines.inventory.character_corpse).clear() end
-```
-
-**Cleanup:** clear the biter:
-```
-/c for _, e in ipairs(game.player.surface.find_entities_filtered{force = "enemy"}) do e.destroy() end
 ```
 
 ## 19. Unit group formation
