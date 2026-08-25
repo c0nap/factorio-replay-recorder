@@ -61,7 +61,7 @@ tools can start building against.
 </details>
 
 <details>
-<summary><strong>0.1.1</strong> — 2026-08-23</summary>
+<summary><strong>0.1.1</strong> — 2026-08-25</summary>
 
 *Housekeeping*
 
