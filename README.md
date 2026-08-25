@@ -176,13 +176,13 @@ There's no automated test suite - the mod's behavior depends on a live
 player character interacting with a running Factorio simulation, which
 isn't something a headless CI job can easily stand in for. Instead:
 
-* [`testing-checklist`](docs/testing-checklist.md) is a short,
-  heavily console-scripted list of scenarios to run through in a real
-  (throwaway) save, covering every event type the mod can produce.
-* [`tools/verify_checklist.py`](tools/verify_checklist.py) checks the
-  resulting `replay.json` against that checklist and prints a pass/fail
-  line per scenario - this is the thing to run (and paste, if something
-  fails) instead of raw JSON:
+* [`testing-checklist`](docs/testing-checklist.md) is a step-by-step
+  recipe for recording a single "ideal replay" that exercises every event
+  type the mod can produce, in a throwaway save.
+* [`tools/verify_checklist.py`](tools/verify_checklist.py) checks a
+  resulting `replay.json` against that recipe and prints a pass/fail line
+  per scenario, confirming the recording is complete - this is the thing
+  to run (and paste, if something's missing) instead of raw JSON:
   ```
   python3 tools/verify_checklist.py
   ```

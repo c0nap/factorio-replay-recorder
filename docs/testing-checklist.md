@@ -1,8 +1,10 @@
-# Manual In-Game Test Checklist
+# Ideal Replay Checklist
 
-Generates a `replay.json` that exercises every event type the mod can
-produce, then hands off to two scripts that check it for you - you should
-not need to read raw JSON to know whether something worked.
+A step-by-step recipe for recording an "ideal replay" - a single
+`replay.json` that exercises every event type this mod can produce.
+Following it once, in a throwaway save, produces a complete reference
+replay; two scripts then check it for completeness, so you don't need to
+read raw JSON to confirm it's ready to use.
 
 This is a throwaway test save - don't run it against your real base.
 Console commands (`/c ...`) permanently disable achievements for a save

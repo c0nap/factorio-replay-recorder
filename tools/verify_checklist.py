@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Checks a replay.json against every scenario in docs/testing-checklist.md
-and prints a pass/fail line for each - this is the thing to paste back
-when asking whether a test session worked, instead of raw JSON or the
-full output of inspect_replay.py.
+"""Checks a replay.json against every scenario docs/testing-checklist.md's
+recipe produces, and prints a pass/fail line for each - this is the thing
+to paste back when confirming a recording is a complete ideal-replay
+fixture, instead of raw JSON or the full output of inspect_replay.py.
 
 Usage:
     python3 tools/verify_checklist.py
@@ -320,8 +320,8 @@ def main():
     if malformed:
         print(f"(skipped {malformed} malformed line(s))")
     if not events:
-        print("\nNo events in this file - nothing to check. Run through")
-        print("docs/testing-checklist.md first.")
+        print("\nNo events in this file - nothing to check. Record a replay")
+        print("using docs/testing-checklist.md first.")
         sys.exit(1)
 
     results = run_checks(events)
