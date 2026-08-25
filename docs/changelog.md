@@ -23,6 +23,8 @@ tools can start building against.
 <details>
 <summary><strong>0.1.0</strong> — 2026-08-21</summary>
 
+*MVP*
+
 **Added**
 - Recording turns on for a chunk only once a player (on foot, driving,
   piloting a vehicle, or an unmanned autopilot spidertron) is actually
@@ -58,76 +60,72 @@ tools can start building against.
 
 </details>
 
-<details open>
-<summary><strong>0.1.1</strong> — in progress</summary>
+<details>
+<summary><strong>0.1.1</strong> — 2026-08-25</summary>
 
-Consistency cleanup and closing the schema-accuracy gaps found while
-writing `docs/schema.md`. No new tracked data. Not yet released; kept
-open by default here since it isn't done yet.
+*Housekeeping*
+
+Consistency and accuracy - no new tracked data.
 
 **Changed**
-- Centralized composite-key building (`script/keys.lua`) and owner-key
-  construction (`vehicle_`/`container_`/`robot_`/`inserter_`/
-  `ground_item_` prefixes) into two shared helpers, replacing hand-rolled
-  concatenation that used to live independently in `combat_zones.lua`,
-  `logistics.lua`, `tracker.lua`, and `item_chains.lua`.
-- Standardized `pcall` result-variable naming across `tracker_events.lua`/
-  `item_chains.lua`, and deduplicated `item_chains.lua`'s belt/inserter
-  fallback search into one shared helper.
-- Promoted nest cluster radius to a real user-facing setting (it directly
-  shapes recorded data, like combat radius does); moved the battlefield
-  marker's purely-cosmetic constants (redraw cadence, TTL, line styling)
-  behind `Config` instead of leaving them hardcoded.
-- Routed `control.lua`'s backfill/flush tick-alternation and flush
-  stagger fraction through named `Config` getters instead of inline
-  magic numbers; trimmed `config.lua`'s multi-round tuning-history
-  comments down to a pointer at git history.
-- `docs/schema.md` now documents fields it was missing (`chunk_snapshot`/
-  `item_distribution`'s `chunk`/`surface` wrapper, `player_respawn`'s
-  `force`, `damage_event`'s `target_type`/`position`) and names the
-  literal JSON keys for its list-shaped fields instead of describing them
-  in prose.
-- Root-caused (not just muted) the `fluid_chains.lua` "index out of
-  range" mismatch: `LuaEntity::fluids_count`'s own docs confirm it also
-  counts non-fluidbox storages (a fluid turret's internal ammo buffer,
-  a fluid wagon's contents) that `entity.fluidbox` has no slot for -
-  every fluidbox-bounded loop now uses `#entity.fluidbox` (its own
-  confirmed length operator) instead, so the mismatch can't occur in the
-  first place. The entity-name-based mute/suppress logic this used to
-  need is gone.
-- `fluid_chains.lua` now walks the exact pipe network instead of guessing:
-  `LuaFluidBox::get_pipe_connections` (confirmed) returns each
-  connection's target box *and* its exact index within its own owner, so
-  a multi-fluidbox entity's independent sides (e.g. a pump's two ends)
-  no longer get merged into one reported segment the way the previous
-  guess-every-index version could.
-- `combat_zones.lua`'s `is_player_nearby`/`trigger_combat_at` are local
-  functions now instead of public `CombatZones.*` members - neither was
-  ever called from outside this file.
-- Added locale text for the 10 mod settings that had none (they were
-  showing up as raw internal names like `rrec-chain-near-hops` in
-  Factorio's settings menu instead of a readable name/description).
-- Removed a stale "goal reset" comment left over from the removed
-  scoring framing.
+- Now targets Factorio 2.0.77 (was 2.0.76). A small patch, and the last
+  2.0.x release before 2.1 development began, so it rounds out the
+  version this mod is built against.
+
+**Fixed**
+- Fluid tracking near flamethrower turrets and other multi-connection
+  buildings (like pumps) is now accurate. It previously could suppress
+  fluid data around a flamethrower turret, and could merge a pump's two
+  independent sides into a single reading instead of keeping them
+  separate.
+- Every mod setting now shows a proper name and description in
+  Factorio's settings menu - several previously showed only their raw
+  internal ID (e.g. `rrec-chain-near-hops`).
+- The schema reference now lists every field several event types
+  actually contain - `chunk_snapshot`, `item_distribution`,
+  `player_respawn`, and `damage_event` were all missing some.
+
+**Added**
+- A "Nest cluster radius" setting, so how nearby nests get grouped into
+  a rough "base" in a chunk snapshot is now tunable, the same way combat
+  detection radius already was.
 
 **Removed**
-- Dead "permanent zone" cleanup code (`CombatZones.expire_permanent_zones`
-  and its `zone.permanent` checks): no released version of this mod has
-  ever set that flag - full recording mode's chunk activation was
-  already changed, before 0.1.0 shipped, to never add a
-  `storage.active_zones` entry at all, so the flag it existed to migrate
-  away from was already unreachable in the first public release.
-- `score_update` - keeping a running per-force death tally isn't this
-  recorder's job. `death_event` already names the victim's force and,
-  when known, the killer's, which is the attribution a downstream tool
-  actually needs; `tools/inspect_replay.py`'s scoreboard summary is now
-  computed straight from `death_event` instead of a dedicated event.
+- The `score_update` event. A running per-force death count isn't this
+  recorder's job - `death_event` already names the victim's force and,
+  when known, the killer's, so that attribution is still available. If
+  you use `score_update` downstream, switch to reading force off
+  `death_event` instead - `tools/inspect_replay.py` already does.
+  - The testing checklist's check for `score_update` was removed with
+    it, so a checklist run against 0.1.1 correctly shows 29/29 passing
+    instead of 30/30. Expected, not a regression.
 
-**Planned (not yet implemented)**
-- `inspect_replay.py`'s battlefield-cluster lookup keys on chunk
-  coordinates alone, dropping the surface - activity on two surfaces
-  that happen to share chunk coordinates can be misattributed to the
-  wrong cluster.
+**Internal / code changes**
+
+Implementation detail, not user-facing - kept here for anyone working
+on the mod itself:
+
+- `entity.fluids_count` counts some non-fluidbox storages (e.g. a
+  turret's internal ammo buffer) that `entity.fluidbox` has no slot for
+  - `fluid_chains.lua` now bounds every fluidbox loop with
+  `#entity.fluidbox` instead, and walks the pipe network via
+  `LuaFluidBox::get_pipe_connections` for the exact connected index
+  instead of guessing a neighbor's whole range.
+- Centralized composite-key building (`script/keys.lua`) and owner-key
+  construction (`TrackerEvents.*_owner_key`) into shared helpers,
+  replacing hand-rolled string concatenation spread across several
+  files.
+- Standardized `pcall` result-variable naming, and deduplicated a
+  repeated search pattern in `item_chains.lua`.
+- Routed remaining hardcoded tuning constants (backfill/flush timing,
+  battlefield-marker styling) through `Config`; trimmed `config.lua`'s
+  tuning-history comments.
+- Removed dead code: `CombatZones.expire_permanent_zones` (no released
+  version of this mod ever produced the state it cleaned up), and two
+  functions only ever called within their own file are now local
+  instead of public.
+- Assorted stale-comment cleanup, including a leftover "goal reset"
+  sports metaphor from the removed scoring framing.
 
 </details>
 
@@ -208,7 +206,7 @@ Flagged for discussion, not decided:
 ## v0.3 — Full Vanilla Coverage
 
 Unreleased. The goal: record every prototype and data point vanilla
-Factorio 2.0.76 has to offer - no mod-compatibility work yet, just
+Factorio 2.0.77 has to offer - no mod-compatibility work yet, just
 closing what the 0.1 testing checklist flagged as gaps:
 
 - **Landmines** - not confirmed whether this mod tracks them at all
@@ -254,10 +252,17 @@ Space Age and the quality system as the first real test of that
 generalization. Lays the groundwork v0.5's multi-version adapters will
 build on, without committing to multi-version support itself yet.
 
+- **Multi-surface accuracy.** Most events don't carry an explicit
+  surface field (only `chunk_snapshot` and `item_distribution` do), so
+  downstream tooling like `tools/inspect_replay.py`'s battlefield
+  clustering currently assumes a single surface - harmless today, but
+  worth revisiting once Space Age's multiple real surfaces make that
+  assumption wrong in practice.
+
 ## v0.5 — Multi-Version Support
 
 Unreleased. The payoff for the hardening done in v0.2-v0.4: targeting
-multiple Factorio versions (e.g. 2.1, 2.0.76, 1.1, 0.16) via small
+multiple Factorio versions (e.g. 2.1, 2.0.77, 1.1, 0.16) via small
 per-version adapters, since a replay is tied to the exact version it was
 recorded on and most replays anyone has aren't on the latest version.
 Likely means maintaining more than one branch, with the release page
